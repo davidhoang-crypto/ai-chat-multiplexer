@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>New Tab — AI Multiplexer</title>
+<style>
+  :root {
+    --bg: #fbfaf6;
+    --surface: #ffffff;
+    --surface-2: #f5f2ea;
+    --border: #e7e1cf;
+    --text: #1a1408;
+    --text-secondary: #5e5742;
+    --accent: #d4a017;
+    --accent-light: #f5d06f;
+    --shadow: 0 4px 12px rgba(60, 40, 0, 0.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e0c08;
+      --surface: #16130c;
+      --surface-2: #1d1a11;
+      --border: #2e2918;
+      --text: #f7efd9;
+      --text-secondary: #b8a87c;
+      --accent: #e8b339;
+      --accent-light: #f5d06f;
+      --shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; width: 100%; }
+  body {
+    display: grid;
+    place-items: center;
+    padding: 32px;
+    background:
+      radial-gradient(circle at 50% 0%, rgba(212, 160, 23, 0.10), transparent 50%),
+      var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  .stage {
+    display: grid;
+    gap: 32px;
+    width: 100%;
+    max-width: 760px;
+    text-align: center;
+    align-self: center;
+  }
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    margin: 0 auto;
+  }
+  .brand svg.logo {
+    width: 56px;
+    height: 56px;
+    display: block;
+    filter: drop-shadow(0 6px 18px rgba(184, 134, 11, 0.35));
+  }
+  .brand .wordmark {
+    font-size: 38px;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    line-height: 1;
+    background: linear-gradient(135deg, #f7d678 0%, #d4a017 50%, #8a5d0a 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .tagline {
+    color: var(--text-secondary);
+    font-size: 15px;
+    font-weight: 500;
+    margin: -16px 0 0;
+    letter-spacing: -0.005em;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+    margin-top: 4px;
+  }
+  .card {
+    display: grid;
+    grid-template-rows: auto auto;
+    align-items: center;
+    justify-items: center;
+    gap: 10px;
+    padding: 20px 12px 18px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface);
+    color: var(--text);
+    text-decoration: none;
+    cursor: pointer;
+    transition: border-color 140ms ease, transform 140ms ease, background 140ms ease, box-shadow 140ms ease;
+  }
+  .card:hover {
+    border-color: var(--accent);
+    background: var(--surface-2);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 22px rgba(184, 134, 11, 0.16);
+  }
+  .card .logo-wrap {
+    width: 40px;
+    height: 40px;
+    display: grid;
+    place-items: center;
+    border-radius: 9px;
+    background: var(--surface-2);
+    overflow: hidden;
+  }
+  .card .logo-wrap img {
+    width: 28px;
+    height: 28px;
+    display: block;
+    object-fit: contain;
+  }
+  .card .name {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .footer {
+    margin-top: 16px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+  }
+</style>
+</head>
+<body>
+  <main class="stage">
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <defs>
+          <linearGradient id="lg" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#f5d06f"/>
+            <stop offset="55%" stop-color="#d4a017"/>
+            <stop offset="100%" stop-color="#a47411"/>
+          </linearGradient>
+          <linearGradient id="sh" x1="0" y1="0" x2="0" y2="24" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#fff" stop-opacity="0.55"/>
+            <stop offset="60%" stop-color="#fff" stop-opacity="0"/>
+          </linearGradient>
+        </defs>
+        <rect width="24" height="24" rx="6" fill="url(#lg)"/>
+        <rect width="24" height="24" rx="6" fill="url(#sh)"/>
+        <rect x="5" y="5" width="6" height="6" rx="1.4" fill="#1a1408" fill-opacity="0.85"/>
+        <rect x="13" y="5" width="6" height="6" rx="1.4" fill="#1a1408" fill-opacity="0.35"/>
+        <rect x="5" y="13" width="6" height="6" rx="1.4" fill="#1a1408" fill-opacity="0.35"/>
+        <rect x="13" y="13" width="6" height="6" rx="1.4" fill="#1a1408" fill-opacity="0.85"/>
+      </svg>
+      <span class="wordmark">AI Multiplexer</span>
+    </div>
+    <p class="tagline">Mở nhanh một dịch vụ AI</p>
+    <nav class="grid" aria-label="Quick links">
+      <a class="card" href="https://chatgpt.com" data-target="https://chatgpt.com">
+        <span class="logo-wrap"><img src="https://www.google.com/s2/favicons?domain=chatgpt.com&sz=64" alt="" referrerpolicy="no-referrer"/></span>
+        <span class="name">ChatGPT</span>
+      </a>
+      <a class="card" href="https://claude.ai" data-target="https://claude.ai">
+        <span class="logo-wrap"><img src="https://www.google.com/s2/favicons?domain=claude.ai&sz=64" alt="" referrerpolicy="no-referrer"/></span>
+        <span class="name">Claude</span>
+      </a>
+      <a class="card" href="https://gemini.google.com" data-target="https://gemini.google.com">
+        <span class="logo-wrap"><img src="https://www.google.com/s2/favicons?domain=gemini.google.com&sz=64" alt="" referrerpolicy="no-referrer"/></span>
+        <span class="name">Gemini</span>
+      </a>
+      <a class="card" href="https://chat.deepseek.com" data-target="https://chat.deepseek.com">
+        <span class="logo-wrap"><img src="https://www.google.com/s2/favicons?domain=chat.deepseek.com&sz=64" alt="" referrerpolicy="no-referrer"/></span>
+        <span class="name">DeepSeek</span>
+      </a>
+      <a class="card" href="https://www.perplexity.ai" data-target="https://www.perplexity.ai">
+        <span class="logo-wrap"><img src="https://www.google.com/s2/favicons?domain=perplexity.ai&sz=64" alt="" referrerpolicy="no-referrer"/></span>
+        <span class="name">Perplexity</span>
+      </a>
+      <a class="card" href="https://search.brave.com/" data-target="https://search.brave.com/">
+        <span class="logo-wrap"><img src="https://www.google.com/s2/favicons?domain=search.brave.com&sz=64" alt="" referrerpolicy="no-referrer"/></span>
+        <span class="name">Brave Search</span>
+      </a>
+    </nav>
+    <p class="footer">Hoặc nhập địa chỉ tùy ý vào ô URL phía trên</p>
+  </main>
+  <script>
+    // Force same-window navigation in case any platform tries to open externally
+    document.addEventListener('click', function (event) {
+      var link = event.target.closest('a[data-target]');
+      if (!link) return;
+      event.preventDefault();
+      var url = link.getAttribute('data-target');
+      try {
+        window.top.location.assign(url);
+      } catch (e) {
+        window.location.assign(url);
+      }
+    }, true);
+  </script>
+</body>
+</html>

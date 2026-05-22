@@ -929,13 +929,13 @@ function App() {
     <main className={`app-shell theme-${theme}`}>
       <header className="terminal-topbar">
         <section className="brand">
-          <span className="brand-mark" aria-hidden="true">
-            <AppLogo size={24} />
-          </span>
-          <AppWordmark height={18} className="brand-wordmark" />
-          <span className="brand-status">
-            <span className="live-dot" /> {activePanes.length} {activePanes.length === 1 ? "pane" : "panes"}
-          </span>
+          <div className="brand-badge" aria-label="AI Multiplexer">
+            <span className="brand-mark" aria-hidden="true">
+              <AppLogo size={26} />
+            </span>
+            <AppWordmark height={20} className="brand-wordmark" />
+            <span className="brand-shimmer" aria-hidden="true" />
+          </div>
         </section>
 
         <section className="workspace-center">

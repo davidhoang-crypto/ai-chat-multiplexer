@@ -50,44 +50,33 @@ export function AppLogo({ size = 22, ...rest }: IconProps) {
   );
 }
 
-export function AppWordmark({ height = 18, ...rest }: SVGProps<SVGSVGElement> & { height?: number }) {
+export function AppWordmark({ height = 20, ...rest }: SVGProps<SVGSVGElement> & { height?: number }) {
   return (
     <svg
       height={height}
-      viewBox="0 0 168 24"
+      viewBox="0 0 192 26"
       fill="none"
       aria-label="AI Multiplexer"
       role="img"
       {...rest}
     >
       <defs>
-        <linearGradient id="acm-wordmark-grad" x1="0" y1="0" x2="168" y2="24" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor="#f5d06f" />
-          <stop offset="55%" stopColor="#d4a017" />
-          <stop offset="100%" stopColor="#a47411" />
+        <linearGradient id="acm-wordmark-grad" x1="0" y1="0" x2="192" y2="26" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#f7d678" />
+          <stop offset="40%" stopColor="#d4a017" />
+          <stop offset="100%" stopColor="#8a5d0a" />
         </linearGradient>
       </defs>
       <text
         x="0"
-        y="18"
+        y="20"
         fill="url(#acm-wordmark-grad)"
         fontFamily="Inter, system-ui, sans-serif"
-        fontSize="17"
+        fontSize="20"
         fontWeight="800"
-        letterSpacing="-0.6"
+        letterSpacing="-0.7"
       >
-        AI
-      </text>
-      <text
-        x="26"
-        y="18"
-        fill="currentColor"
-        fontFamily="Inter, system-ui, sans-serif"
-        fontSize="17"
-        fontWeight="600"
-        letterSpacing="-0.4"
-      >
-        Multiplexer
+        AI Multiplexer
       </text>
     </svg>
   );
