@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import "./App.css";
 import {
   AppLogo,
+  AppWordmark,
   IconArrowLeft,
   IconArrowRight,
   IconCheck,
@@ -17,6 +18,7 @@ import {
   IconTrash,
   IconX,
 } from "./Icons";
+import { getNewTabUrl, isNewTabUrl, NEW_TAB_TITLE } from "./newtab";
 
 type ChatTab = {
   id: string;
@@ -161,14 +163,17 @@ function getOriginFallbackIcon(url: string) {
 }
 
 function getDisplayUrl(tab: ChatTab) {
-  return tab.currentUrl || tab.url || tab.loadedUrl;
+  const url = tab.currentUrl || tab.url || tab.loadedUrl;
+  if (isNewTabUrl(url)) return "";
+  return url;
 }
 
 function getFallbackTabTitle(url: string) {
+  if (isNewTabUrl(url)) return NEW_TAB_TITLE;
   try {
-    return new URL(normalizeUrl(url)).hostname.replace(/^www\./, "") || "New Tab";
+    return new URL(normalizeUrl(url)).hostname.replace(/^www\./, "") || NEW_TAB_TITLE;
   } catch {
-    return "New Tab";
+    return NEW_TAB_TITLE;
   }
 }
 
@@ -729,8 +734,14 @@ function App() {
   function addTab(paneId: string) {
     updateActivePane(paneId, (pane) => {
       const tabId = createId("tab");
-      const initialUrl = pane.tabs[0]?.url ?? DEFAULT_URL;
-      const nextTab = { id: tabId, title: getFallbackTabTitle(initialUrl), url: initialUrl, loadedUrl: initialUrl };
+      const newTabUrl = getNewTabUrl();
+      const nextTab: ChatTab = {
+        id: tabId,
+        title: NEW_TAB_TITLE,
+        url: newTabUrl,
+        loadedUrl: newTabUrl,
+        currentUrl: newTabUrl,
+      };
 
       return {
         ...pane,
@@ -919,8 +930,15 @@ function App() {
       <header className="terminal-topbar">
         <section className="brand">
           <span className="brand-mark" aria-hidden="true">
-            <AppLogo size={22} />
+            <AppLogo size={24} />
           </span>
+          <AppWordmark height={18} className="brand-wordmark" />
+          <span className="brand-status">
+            <span className="live-dot" /> {activePanes.length} {activePanes.length === 1 ? "pane" : "panes"}
+          </span>
+        </section>
+
+        <section className="workspace-center">
           <details
             className="workspace-switcher"
             open={isWorkspaceMenuOpen}
@@ -995,9 +1013,6 @@ function App() {
               </button>
             </div>
           </details>
-          <span className="brand-status">
-            <span className="live-dot" /> {activePanes.length} {activePanes.length === 1 ? "pane" : "panes"}
-          </span>
         </section>
 
         <section className="toolbar" aria-label="Điều khiển layout">
