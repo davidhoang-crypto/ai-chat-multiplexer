@@ -1,6 +1,6 @@
 import type { SVGProps } from "react";
 
-type IconProps = SVGProps<SVGSVGElement> & { size?: number };
+type IconProps = Omit<SVGProps<SVGSVGElement>, "strokeWidth"> & { size?: number };
 
 function baseProps({ size = 16, strokeWidth = 1.75, ...rest }: IconProps & { strokeWidth?: number }) {
   return {

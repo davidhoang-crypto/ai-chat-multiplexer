@@ -180,18 +180,6 @@ Khi tạo webview, Tauri set `data_directory` về thư mục tương ứng → 
 
 ---
 
-## Roadmap / TODO
-
-- [ ] Phím tắt `Ctrl+1/2/3` để chuyển workspace nhanh
-- [ ] Inline rename workspace (double-click thay modal)
-- [ ] Drag để reorder workspaces
-- [ ] Resize tự do giữa các pane (kéo viền)
-- [ ] Cho user thêm/sửa preset AI
-- [ ] Kéo tab ra thành pane mới (tách)
-- [ ] Custom URL khi tạo pane (không chỉ 6 preset)
-
----
-
 ## Tác giả
 
 Made by **An** với sự hỗ trợ của AI coding assistant.
