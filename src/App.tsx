@@ -422,7 +422,11 @@ function App() {
     ? 1
     : Math.max(1, Math.min(activeWorkspace.columns, activePanes.length));
   const shouldSuspendNativeWebviews =
-    isNewPaneMenuOpen || isWorkspaceMenuOpen || draggingPaneId !== null;
+    isNewPaneMenuOpen ||
+    isWorkspaceMenuOpen ||
+    draggingPaneId !== null ||
+    textPrompt !== null ||
+    confirmDialog !== null;
 
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
