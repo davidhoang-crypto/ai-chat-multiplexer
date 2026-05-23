@@ -8,14 +8,18 @@ import {
   IconArrowRight,
   IconCheck,
   IconChevronDown,
+  IconDownload,
   IconEdit,
+  IconExternal,
   IconMaximize,
   IconMinimize,
   IconMoon,
   IconPlus,
   IconRefresh,
+  IconSettings,
   IconSun,
   IconTrash,
+  IconUpload,
   IconX,
 } from "./Icons";
 import { getNewTabUrl, isNewTabUrl, NEW_TAB_TITLE } from "./newtab";
@@ -52,13 +56,6 @@ type Workspace = {
   panes: ChatPane[];
 };
 
-type ChatPreset = {
-  id: "brave" | "chatgpt" | "gemini" | "claude" | "deepseek" | "perplexity";
-  title: string;
-  url: string;
-  logoUrl: string;
-};
-
 type Profile = {
   id: string;
   name: string;
@@ -77,28 +74,28 @@ const LEGACY_LAYOUT_KEY = "ai-chat-multiplexer-layout-v2";
 const THEME_STORAGE_KEY = "ai-chat-multiplexer-theme";
 const DEFAULT_URL = "https://search.brave.com/";
 const DEFAULT_PROFILE_ID = "prof-default";
+const APP_VERSION = "0.1.4";
+const GITHUB_REPO = "davidhoang-crypto/ai-chat-multiplexer";
+const RELEASES_URL = `https://github.com/${GITHUB_REPO}/releases/latest`;
 
 type ThemeMode = "light" | "dark";
 
-const CHAT_PRESETS: ChatPreset[] = [
-  { id: "brave", title: "Brave", url: DEFAULT_URL, logoUrl: "https://www.google.com/s2/favicons?domain=search.brave.com&sz=64" },
-  { id: "chatgpt", title: "ChatGPT", url: "https://chatgpt.com", logoUrl: "https://www.google.com/s2/favicons?domain=chatgpt.com&sz=64" },
-  { id: "gemini", title: "Gemini", url: "https://gemini.google.com", logoUrl: "https://www.google.com/s2/favicons?domain=gemini.google.com&sz=64" },
-  { id: "claude", title: "Claude", url: "https://claude.ai", logoUrl: "https://www.google.com/s2/favicons?domain=claude.ai&sz=64" },
-  { id: "deepseek", title: "DeepSeek", url: "https://chat.deepseek.com", logoUrl: "https://www.google.com/s2/favicons?domain=chat.deepseek.com&sz=64" },
-  { id: "perplexity", title: "Perplexity", url: "https://www.perplexity.ai", logoUrl: "https://www.google.com/s2/favicons?domain=perplexity.ai&sz=64" },
-];
-
-function PresetLogo({ logoUrl, title }: Pick<ChatPreset, "logoUrl" | "title">) {
-  return (
-    <span className="preset-logo" aria-hidden="true" title={title}>
-      <img src={logoUrl} alt="" draggable={false} referrerPolicy="no-referrer" />
-    </span>
-  );
-}
-
 function createId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function compareVersions(a: string, b: string): number {
+  const parse = (v: string) => v.split(/[.-]/).map((part) => Number.parseInt(part, 10) || 0);
+  const aa = parse(a);
+  const bb = parse(b);
+  const length = Math.max(aa.length, bb.length);
+  for (let index = 0; index < length; index += 1) {
+    const left = aa[index] ?? 0;
+    const right = bb[index] ?? 0;
+    if (left > right) return 1;
+    if (left < right) return -1;
+  }
+  return 0;
 }
 
 function createDefaultProfiles(): Profile[] {
@@ -141,12 +138,28 @@ function normalizeUrl(url: string) {
   return `https://${trimmed}`;
 }
 
-function createStableLabelPart(value: string) {
-  let hash = 0;
-  for (let index = 0; index < value.length; index += 1) {
-    hash = Math.imul(31, hash) + value.charCodeAt(index) | 0;
+// Decide if a string is a real URL/host or a search query.
+// Used by the URL bar and the new-tab search box to mimic browser behavior.
+function resolveAddress(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) return "about:blank";
+
+  // Already has a scheme — pass through.
+  if (/^[a-z][a-z\d+.-]*:/i.test(trimmed)) return trimmed;
+
+  // Plain "localhost", "localhost:1234" or IP-with-port → treat as URL.
+  if (/^(localhost|127\.0\.0\.1)(:\d+)?(\/.*)?$/i.test(trimmed)) {
+    return `http://${trimmed}`;
   }
-  return Math.abs(hash).toString(36);
+
+  // No spaces and looks like a host (has a dot, no path-only tokens).
+  // Examples: "google.com", "search.brave.com/", "example.com/path?q=1".
+  if (!/\s/.test(trimmed) && /^[\w-]+(\.[\w-]+)+([:/?#].*)?$/i.test(trimmed)) {
+    return `https://${trimmed}`;
+  }
+
+  // Fall back to search engine.
+  return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
 }
 
 function isTauriRuntime() {
@@ -189,28 +202,12 @@ function isPaneDragControl(target: EventTarget | null) {
   return target instanceof HTMLElement && Boolean(target.closest("button, input, select, summary, a, [role='button']"));
 }
 
-function createPaneFromPreset(preset: ChatPreset, profileId: string, profileName: string): ChatPane {
-  const paneId = createId("pane");
-  const tabId = createId("tab");
-  const paneTitle = profileName === "Default" ? preset.title : `${preset.title} — ${profileName}`;
-
-  return {
-    id: paneId,
-    title: paneTitle,
-    profileId,
-    activeTabId: tabId,
-    tabs: [{ id: tabId, title: preset.title, url: preset.url, loadedUrl: preset.url }],
-  };
-}
-
-function getNativeWebviewLabel(paneId: string, tab: ChatTab) {
-  const paneSessionId = paneId.replace(/[^a-zA-Z0-9_-]/g, "-");
-  const normalizedUrl = normalizeUrl(tab.loadedUrl);
-
-  return `pane-${paneSessionId}-tab-${tab.id}-url-${createStableLabelPart(normalizedUrl)}`.replace(
-    /[^a-zA-Z0-9_-]/g,
-    "-",
-  );
+function getNativeWebviewLabel(_paneId: string, tab: ChatTab) {
+  // Use ONLY tab.id so the label stays stable when:
+  // - the tab is moved between panes (drag tear-out / reorder),
+  // - the tab navigates to a different URL.
+  // Both would otherwise close+recreate the webview and lose state.
+  return `tab-${tab.id}`.replace(/[^a-zA-Z0-9_-]/g, "-");
 }
 
 function hydrateTabs(tabs: ChatTab[]): ChatTab[] {
@@ -394,7 +391,15 @@ function App() {
   });
   const [focusedPaneId, setFocusedPaneId] = useState<string | null>(null);
   const [isNewPaneMenuOpen, setIsNewPaneMenuOpen] = useState(false);
-  const [profileForNewPane, setProfileForNewPane] = useState<Profile | null>(null);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<
+    | { kind: "idle" }
+    | { kind: "checking" }
+    | { kind: "available"; latest: string; releaseUrl: string }
+    | { kind: "current" }
+    | { kind: "error"; message: string }
+  >({ kind: "idle" });
+  const [backupBusy, setBackupBusy] = useState<"idle" | "exporting" | "importing">("idle");
   const [textPrompt, setTextPrompt] = useState<{
     title: string;
     initial: string;
@@ -415,7 +420,18 @@ function App() {
   const [editingUrls, setEditingUrls] = useState<Record<string, string>>({});
   const webviewShells = useRef<Record<string, HTMLDivElement | null>>({});
   const nativeWebviews = useRef<Set<string>>(new Set());
+  const nativeWebviewUrls = useRef<Record<string, string>>({});
   const paneDrag = useRef<{ paneId: string; pointerId: number; startX: number; startY: number; active: boolean } | null>(null);
+  const tabDrag = useRef<{
+    paneId: string;
+    tabId: string;
+    pointerId: number;
+    startX: number;
+    startY: number;
+    active: boolean;
+  } | null>(null);
+  const [tabDragOver, setTabDragOver] = useState<{ paneId: string; tabId: string | null; before: boolean } | null>(null);
+  const [draggingTabKey, setDraggingTabKey] = useState<string | null>(null);
 
   const activeWorkspace =
     state.workspaces.find((ws) => ws.id === state.activeWorkspaceId) ?? state.workspaces[0];
@@ -431,7 +447,9 @@ function App() {
     isWorkspaceMenuOpen ||
     draggingPaneId !== null ||
     textPrompt !== null ||
-    confirmDialog !== null;
+    confirmDialog !== null ||
+    isSettingsOpen ||
+    draggingTabKey !== null;
 
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -440,6 +458,27 @@ function App() {
   useEffect(() => {
     window.localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
+
+  // Close dropdown menus when the user clicks outside of them.
+  // Settings modal is intentionally excluded — it has its own backdrop.
+  useEffect(() => {
+    if (!isNewPaneMenuOpen && !isWorkspaceMenuOpen) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Element | null;
+      if (!target) return;
+
+      if (isNewPaneMenuOpen && !target.closest(".new-pane-menu")) {
+        setIsNewPaneMenuOpen(false);
+      }
+      if (isWorkspaceMenuOpen && !target.closest(".workspace-switcher")) {
+        setIsWorkspaceMenuOpen(false);
+      }
+    };
+
+    window.addEventListener("pointerdown", handlePointerDown, true);
+    return () => window.removeEventListener("pointerdown", handlePointerDown, true);
+  }, [isNewPaneMenuOpen, isWorkspaceMenuOpen]);
 
   useEffect(() => {
     if (!isTauriRuntime()) {
@@ -461,7 +500,11 @@ function App() {
           const isPaneVisible = !focusedPaneId || focusedPaneId === pane.id;
 
           pane.tabs.forEach((tab) => {
-            const normalizedUrl = normalizeUrl(tab.loadedUrl);
+            // Use the latest navigated URL when available so the webview is
+            // recreated at the right URL after app restart / HMR. Falls back to
+            // loadedUrl for fresh tabs.
+            const targetUrl = tab.currentUrl || tab.url || tab.loadedUrl;
+            const normalizedUrl = normalizeUrl(targetUrl);
             const label = getNativeWebviewLabel(pane.id, tab);
             allLabels.add(label);
 
@@ -489,6 +532,17 @@ function App() {
               width: bounds.width,
               height: bounds.height,
             }).catch((error) => console.error("native_webview_upsert failed", error));
+
+            // If the webview already exists with a different desired URL,
+            // navigate it instead of recreating (preserves session/cookies).
+            const previousUrl = nativeWebviewUrls.current[label];
+            if (previousUrl !== undefined && previousUrl !== normalizedUrl) {
+              void invoke("native_webview_load_url", {
+                label,
+                url: normalizedUrl,
+              }).catch((error) => console.error("native_webview_load_url failed", error));
+            }
+            nativeWebviewUrls.current[label] = normalizedUrl;
           });
         });
       });
@@ -496,6 +550,7 @@ function App() {
       nativeWebviews.current.forEach((label) => {
         if (!allLabels.has(label)) {
           void invoke("native_webview_close", { label }).catch(() => undefined);
+          delete nativeWebviewUrls.current[label];
         } else if (!visibleLabels.has(label)) {
           void invoke("native_webview_hide", { label }).catch(() => undefined);
         }
@@ -612,10 +667,29 @@ function App() {
     updateActiveWorkspace((workspace) => ({ ...workspace, columns }));
   }
 
-  function addPaneWithProfile(preset: ChatPreset, profile: Profile) {
+  function addBlankPaneWithProfile(profile: Profile) {
+    const paneId = createId("pane");
+    const tabId = createId("tab");
+    const newTabUrl = getNewTabUrl();
+    const paneTitle = profile.name === "Default" ? "Main Chat" : profile.name;
+    const newPane: ChatPane = {
+      id: paneId,
+      title: paneTitle,
+      profileId: profile.id,
+      activeTabId: tabId,
+      tabs: [
+        {
+          id: tabId,
+          title: NEW_TAB_TITLE,
+          url: newTabUrl,
+          loadedUrl: newTabUrl,
+          currentUrl: newTabUrl,
+        },
+      ],
+    };
     updateActiveWorkspace((workspace) => ({
       ...workspace,
-      panes: [...workspace.panes, createPaneFromPreset(preset, profile.id, profile.name)],
+      panes: [...workspace.panes, newPane],
     }));
   }
 
@@ -753,8 +827,25 @@ function App() {
 
   function removeTab(paneId: string, tabId: string) {
     updateActivePane(paneId, (pane) => {
+      // If this is the last tab, replace it with a fresh new-tab page instead
+      // of leaving an empty pane.
       if (pane.tabs.length === 1) {
-        return pane;
+        if (pane.tabs[0].id !== tabId) return pane;
+        const newTabId = createId("tab");
+        const newTabUrl = getNewTabUrl();
+        return {
+          ...pane,
+          activeTabId: newTabId,
+          tabs: [
+            {
+              id: newTabId,
+              title: NEW_TAB_TITLE,
+              url: newTabUrl,
+              loadedUrl: newTabUrl,
+              currentUrl: newTabUrl,
+            },
+          ],
+        };
       }
 
       const nextTabs = pane.tabs.filter((tab) => tab.id !== tabId);
@@ -795,6 +886,29 @@ function App() {
       return;
     }
 
+    const trimmed = draftUrl.trim();
+    if (!trimmed) {
+      // Empty input → reset tab to new tab page.
+      const newTabUrl = getNewTabUrl();
+      updateActivePane(paneId, (pane) => ({
+        ...pane,
+        tabs: pane.tabs.map((tab) =>
+          tab.id === tabId
+            ? {
+                ...tab,
+                title: NEW_TAB_TITLE,
+                url: newTabUrl,
+                loadedUrl: newTabUrl,
+                currentUrl: newTabUrl,
+                faviconUrl: undefined,
+                isLoading: false,
+              }
+            : tab,
+        ),
+      }));
+      return;
+    }
+
     updateActivePane(paneId, (pane) => ({
       ...pane,
       tabs: pane.tabs.map((tab) => {
@@ -802,7 +916,7 @@ function App() {
           return tab;
         }
 
-        const loadedUrl = normalizeUrl(draftUrl);
+        const loadedUrl = resolveAddress(draftUrl);
 
         return {
           ...tab,
@@ -833,6 +947,121 @@ function App() {
       label: getNativeWebviewLabel(paneId, tab),
       action,
     }).catch((error) => console.error("native_webview_navigate failed", error));
+  }
+
+  function moveTabWithinPane(paneId: string, sourceTabId: string, targetTabId: string, before: boolean) {
+    if (sourceTabId === targetTabId) return;
+    updateActivePane(paneId, (pane) => {
+      const sourceIndex = pane.tabs.findIndex((tab) => tab.id === sourceTabId);
+      if (sourceIndex < 0) return pane;
+
+      const tabs = [...pane.tabs];
+      const [moved] = tabs.splice(sourceIndex, 1);
+      const adjustedTarget = tabs.findIndex((tab) => tab.id === targetTabId);
+      if (adjustedTarget < 0) {
+        // target removed during splice (shouldn't happen) — append.
+        tabs.push(moved);
+      } else {
+        const insertAt = before ? adjustedTarget : adjustedTarget + 1;
+        tabs.splice(insertAt, 0, moved);
+      }
+      return { ...pane, tabs };
+    });
+  }
+
+  function moveTabAcrossPanes(
+    sourcePaneId: string,
+    sourceTabId: string,
+    targetPaneId: string,
+    targetTabId: string | null,
+    before: boolean,
+  ) {
+    if (sourcePaneId === targetPaneId) return;
+    updateActiveWorkspace((workspace) => {
+      const sourcePane = workspace.panes.find((pane) => pane.id === sourcePaneId);
+      const targetPane = workspace.panes.find((pane) => pane.id === targetPaneId);
+      if (!sourcePane || !targetPane) return workspace;
+
+      // Only allow if both panes share the same profile.
+      if (sourcePane.profileId !== targetPane.profileId) return workspace;
+
+      const tab = sourcePane.tabs.find((t) => t.id === sourceTabId);
+      if (!tab) return workspace;
+
+      // Don't leave the source pane empty.
+      if (sourcePane.tabs.length <= 1) return workspace;
+
+      const updatedSourceTabs = sourcePane.tabs.filter((t) => t.id !== sourceTabId);
+      const updatedSource: ChatPane = {
+        ...sourcePane,
+        tabs: updatedSourceTabs,
+        activeTabId:
+          sourcePane.activeTabId === sourceTabId
+            ? updatedSourceTabs[0].id
+            : sourcePane.activeTabId,
+      };
+
+      const targetTabs = [...targetPane.tabs];
+      let insertAt = targetTabs.length;
+      if (targetTabId) {
+        const targetIndex = targetTabs.findIndex((t) => t.id === targetTabId);
+        if (targetIndex >= 0) {
+          insertAt = before ? targetIndex : targetIndex + 1;
+        }
+      }
+      targetTabs.splice(insertAt, 0, tab);
+
+      const updatedTarget: ChatPane = {
+        ...targetPane,
+        tabs: targetTabs,
+        activeTabId: tab.id,
+      };
+
+      return {
+        ...workspace,
+        panes: workspace.panes.map((pane) => {
+          if (pane.id === sourcePaneId) return updatedSource;
+          if (pane.id === targetPaneId) return updatedTarget;
+          return pane;
+        }),
+      };
+    });
+  }
+
+  function detachTabToNewPane(sourcePaneId: string, sourceTabId: string) {
+    updateActiveWorkspace((workspace) => {
+      const sourcePane = workspace.panes.find((pane) => pane.id === sourcePaneId);
+      if (!sourcePane) return workspace;
+      const tab = sourcePane.tabs.find((t) => t.id === sourceTabId);
+      if (!tab) return workspace;
+
+      // If this is the only tab in the pane, do nothing — moving it would leave
+      // an empty pane. (Handled separately by caller if needed.)
+      if (sourcePane.tabs.length <= 1) return workspace;
+
+      const remainingTabs = sourcePane.tabs.filter((t) => t.id !== sourceTabId);
+      const updatedSource: ChatPane = {
+        ...sourcePane,
+        tabs: remainingTabs,
+        activeTabId:
+          sourcePane.activeTabId === sourceTabId ? remainingTabs[0].id : sourcePane.activeTabId,
+      };
+
+      const newPane: ChatPane = {
+        id: createId("pane"),
+        title: sourcePane.title,
+        profileId: sourcePane.profileId,
+        activeTabId: tab.id,
+        tabs: [tab],
+      };
+
+      return {
+        ...workspace,
+        panes: workspace.panes
+          .map((pane) => (pane.id === sourcePaneId ? updatedSource : pane))
+          .concat(newPane),
+      };
+    });
   }
 
   function movePane(sourcePaneId: string, targetPaneId: string) {
@@ -923,6 +1152,251 @@ function App() {
         });
       },
     });
+  }
+
+  async function checkForUpdates() {
+    setUpdateStatus({ kind: "checking" });
+    try {
+      const response = await fetch(
+        `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`,
+        { headers: { Accept: "application/vnd.github+json" } },
+      );
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const data = (await response.json()) as { tag_name?: string; html_url?: string };
+      const latestTag = data.tag_name?.replace(/^v/, "") ?? "";
+      const releaseUrl = data.html_url ?? RELEASES_URL;
+
+      if (!latestTag) {
+        setUpdateStatus({ kind: "error", message: "Không đọc được phiên bản mới." });
+        return;
+      }
+
+      if (compareVersions(latestTag, APP_VERSION) > 0) {
+        setUpdateStatus({ kind: "available", latest: latestTag, releaseUrl });
+      } else {
+        setUpdateStatus({ kind: "current" });
+      }
+    } catch (error) {
+      setUpdateStatus({
+        kind: "error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  async function openReleasePage(url: string) {
+    if (isTauriRuntime()) {
+      try {
+        await invoke("plugin:opener|open_url", { url });
+        return;
+      } catch {
+        // fallthrough to window.open
+      }
+    }
+    window.open(url, "_blank", "noopener");
+  }
+
+  async function exportConfigJson() {
+    setBackupBusy("exporting");
+    try {
+      const json = JSON.stringify(state, null, 2);
+
+      if (isTauriRuntime()) {
+        const { save } = await import("@tauri-apps/plugin-dialog");
+        const filePath = await save({
+          title: "Lưu cấu hình",
+          defaultPath: `ai-multiplexer-config-${new Date().toISOString().slice(0, 10)}.json`,
+          filters: [{ name: "JSON", extensions: ["json"] }],
+        });
+        if (!filePath) {
+          setBackupBusy("idle");
+          return;
+        }
+        await invoke("plugin:fs|write_text_file", { path: filePath, contents: json }).catch(
+          async () => {
+            // tauri-plugin-fs may not be available, fall back to raw command
+            const { writeTextFile } = await import("@tauri-apps/plugin-fs").catch(() => ({
+              writeTextFile: null as null | ((p: string, c: string) => Promise<void>),
+            }));
+            if (writeTextFile) {
+              await writeTextFile(filePath, json);
+              return;
+            }
+            throw new Error("File system plugin không khả dụng");
+          },
+        );
+      } else {
+        const blob = new Blob([json], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `ai-multiplexer-config-${new Date().toISOString().slice(0, 10)}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch (error) {
+      window.alert(`Export lỗi: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setBackupBusy("idle");
+    }
+  }
+
+  async function importConfigJson() {
+    setBackupBusy("importing");
+    try {
+      let text: string | null = null;
+
+      if (isTauriRuntime()) {
+        const { open } = await import("@tauri-apps/plugin-dialog");
+        const filePath = await open({
+          title: "Chọn file cấu hình",
+          multiple: false,
+          filters: [{ name: "JSON", extensions: ["json"] }],
+        });
+        if (!filePath || typeof filePath !== "string") {
+          setBackupBusy("idle");
+          return;
+        }
+        const { readTextFile } = await import("@tauri-apps/plugin-fs").catch(() => ({
+          readTextFile: null as null | ((p: string) => Promise<string>),
+        }));
+        if (!readTextFile) throw new Error("File system plugin không khả dụng");
+        text = await readTextFile(filePath);
+      } else {
+        text = await new Promise<string | null>((resolve) => {
+          const input = document.createElement("input");
+          input.type = "file";
+          input.accept = "application/json";
+          input.onchange = async () => {
+            const file = input.files?.[0];
+            if (!file) {
+              resolve(null);
+              return;
+            }
+            resolve(await file.text());
+          };
+          input.click();
+        });
+      }
+
+      if (!text) {
+        setBackupBusy("idle");
+        return;
+      }
+
+      const parsed = JSON.parse(text) as AppState;
+      if (!Array.isArray(parsed.workspaces) || parsed.workspaces.length === 0) {
+        throw new Error("File không phải config hợp lệ");
+      }
+
+      setConfirmDialog({
+        title: "Thay thế cấu hình hiện tại?",
+        message: "Tất cả workspace và profile hiện tại sẽ bị thay bằng nội dung từ file.",
+        confirmLabel: "Thay thế",
+        danger: true,
+        onConfirm: () => {
+          const profiles =
+            Array.isArray(parsed.profiles) && parsed.profiles.length > 0
+              ? parsed.profiles
+              : createDefaultProfiles();
+          const profileIds = new Set(profiles.map((p) => p.id));
+          const workspaces = parsed.workspaces.map((ws) => ({
+            ...ws,
+            panes: ws.panes.map((pane) => ({
+              ...pane,
+              profileId: profileIds.has(pane.profileId) ? pane.profileId : DEFAULT_PROFILE_ID,
+              tabs: hydrateTabs(pane.tabs ?? []),
+            })),
+          }));
+          const activeId = workspaces.some((ws) => ws.id === parsed.activeWorkspaceId)
+            ? parsed.activeWorkspaceId
+            : workspaces[0].id;
+          setState({ workspaces, activeWorkspaceId: activeId, profiles });
+          setFocusedPaneId(null);
+        },
+      });
+    } catch (error) {
+      window.alert(`Import lỗi: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setBackupBusy("idle");
+    }
+  }
+
+  async function exportFullBackup() {
+    if (!isTauriRuntime()) {
+      window.alert("Backup full (kèm session/cookie) chỉ chạy được trong app desktop.");
+      return;
+    }
+    setBackupBusy("exporting");
+    try {
+      const { save } = await import("@tauri-apps/plugin-dialog");
+      const filePath = await save({
+        title: "Lưu full backup",
+        defaultPath: `ai-multiplexer-backup-${new Date().toISOString().slice(0, 10)}.zip`,
+        filters: [{ name: "ZIP", extensions: ["zip"] }],
+      });
+      if (!filePath) {
+        setBackupBusy("idle");
+        return;
+      }
+      // Save config alongside zip as <name>.json
+      const configPath = filePath.replace(/\.zip$/i, ".json");
+      const { writeTextFile } = await import("@tauri-apps/plugin-fs").catch(() => ({
+        writeTextFile: null as null | ((p: string, c: string) => Promise<void>),
+      }));
+      if (writeTextFile) {
+        await writeTextFile(configPath, JSON.stringify(state, null, 2));
+      }
+      await invoke("backup_sessions_zip", { outputPath: filePath });
+      window.alert(
+        `Backup hoàn tất:\n• ${filePath}\n• ${configPath}\n\nĐể restore, dùng cả 2 file.`,
+      );
+    } catch (error) {
+      window.alert(`Backup lỗi: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setBackupBusy("idle");
+    }
+  }
+
+  async function restoreFullBackup() {
+    if (!isTauriRuntime()) {
+      window.alert("Restore full chỉ chạy được trong app desktop.");
+      return;
+    }
+    setBackupBusy("importing");
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const filePath = await open({
+        title: "Chọn file backup .zip (sessions)",
+        multiple: false,
+        filters: [{ name: "ZIP", extensions: ["zip"] }],
+      });
+      if (!filePath || typeof filePath !== "string") {
+        setBackupBusy("idle");
+        return;
+      }
+
+      setConfirmDialog({
+        title: "Restore session?",
+        message: "Cookies hiện tại sẽ bị thay thế. App sẽ cần restart để áp dụng đầy đủ.",
+        confirmLabel: "Restore",
+        danger: true,
+        onConfirm: async () => {
+          try {
+            await invoke("restore_sessions_zip", { inputPath: filePath });
+            window.alert("Đã restore. Hãy đóng và mở lại app để áp dụng đầy đủ.");
+          } catch (error) {
+            window.alert(`Restore lỗi: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        },
+      });
+    } catch (error) {
+      window.alert(`Restore lỗi: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setBackupBusy("idle");
+    }
   }
 
   return (
@@ -1041,112 +1515,81 @@ function App() {
           <details
             className="new-pane-menu"
             open={isNewPaneMenuOpen}
-            onToggle={(event) => {
-              const open = event.currentTarget.open;
-              setIsNewPaneMenuOpen(open);
-              if (!open) setProfileForNewPane(null);
-            }}
+            onToggle={(event) => setIsNewPaneMenuOpen(event.currentTarget.open)}
           >
-            <summary>New profile</summary>
-            {profileForNewPane === null ? (
-              <div className="preset-menu profile-menu" aria-label="Chọn profile cho pane mới">
-                {state.profiles.map((profile) => (
-                    <div className="profile-row" key={profile.id} role="none">
-                      <button
-                        type="button"
-                        className="profile-pick"
-                        onClick={() => setProfileForNewPane(profile)}
-                      >
-                        <span className="profile-dot" aria-hidden="true">●</span>
-                        <span className="profile-pick-name">{profile.name}</span>
-                      </button>
-                      <button
-                        type="button"
-                        className="icon-button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          renameProfile(profile.id);
-                        }}
-                        aria-label={`Đổi tên ${profile.name}`}
-                        title="Đổi tên"
-                      >
-                        <IconEdit size={11} />
-                      </button>
-                      <button
-                        type="button"
-                        className="icon-button danger"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          deleteProfile(profile.id);
-                        }}
-                        aria-label={`Xóa ${profile.name}`}
-                        title="Xóa profile"
-                      >
-                        <IconTrash size={11} />
-                      </button>
-                    </div>
-                  ))}
-                <div className="menu-separator" role="separator" />
-                <button
-                  type="button"
-                  className="profile-pick profile-create"
-                  onClick={() => {
-                    setIsNewPaneMenuOpen(false);
-                    setProfileForNewPane(null);
-                    openTextPrompt({
-                      title: "Profile mới",
-                      initial: "",
-                      placeholder: "vd: Work, Personal",
-                      onSubmit: (name) => {
-                        const profile = ensureProfileWithName(name);
-                        setProfileForNewPane(profile);
-                        setIsNewPaneMenuOpen(true);
-                      },
-                    });
-                  }}
-                >
-                  <span className="profile-dot" aria-hidden="true">
-                    <IconPlus size={11} />
-                  </span>
-                  <span>New profile…</span>
-                </button>
-              </div>
-            ) : (
-              <div className="preset-menu" aria-label={`Chọn AI cho ${profileForNewPane.name}`}>
-                <button
-                  type="button"
-                  className="profile-back"
-                  onClick={() => setProfileForNewPane(null)}
-                >
-                  <IconArrowLeft size={12} />
-                  <span>{profileForNewPane.name}</span>
-                </button>
-                <div className="menu-separator" role="separator" />
-                {CHAT_PRESETS.map((preset) => (
+            <summary>New pane</summary>
+            <div className="preset-menu profile-menu" aria-label="Chọn profile cho pane mới">
+              {state.profiles.map((profile) => (
+                <div className="profile-row" key={profile.id} role="none">
                   <button
-                    key={preset.id}
                     type="button"
+                    className="profile-pick"
                     onClick={() => {
-                      addPaneWithProfile(preset, profileForNewPane);
+                      addBlankPaneWithProfile(profile);
                       setIsNewPaneMenuOpen(false);
-                      setProfileForNewPane(null);
                     }}
                   >
-                    <PresetLogo logoUrl={preset.logoUrl} title={preset.title} />
-                    <span>{preset.title}</span>
+                    <span className="profile-dot" aria-hidden="true">●</span>
+                    <span className="profile-pick-name">{profile.name}</span>
                   </button>
-                ))}
-              </div>
-            )}
+                  <button
+                    type="button"
+                    className="icon-button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      renameProfile(profile.id);
+                    }}
+                    aria-label={`Đổi tên ${profile.name}`}
+                    title="Đổi tên"
+                  >
+                    <IconEdit size={11} />
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-button danger"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      deleteProfile(profile.id);
+                    }}
+                    aria-label={`Xóa ${profile.name}`}
+                    title="Xóa profile"
+                  >
+                    <IconTrash size={11} />
+                  </button>
+                </div>
+              ))}
+              <div className="menu-separator" role="separator" />
+              <button
+                type="button"
+                className="profile-pick profile-create"
+                onClick={() => {
+                  setIsNewPaneMenuOpen(false);
+                  openTextPrompt({
+                    title: "Profile mới",
+                    initial: "",
+                    placeholder: "vd: Work, Personal",
+                    onSubmit: (name) => {
+                      const profile = ensureProfileWithName(name);
+                      addBlankPaneWithProfile(profile);
+                    },
+                  });
+                }}
+              >
+                <span className="profile-dot" aria-hidden="true">
+                  <IconPlus size={11} />
+                </span>
+                <span>New profile…</span>
+              </button>
+            </div>
           </details>
           <button
             type="button"
             className="theme-toggle"
-            onClick={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
-            aria-label={theme === "dark" ? "Chuyển sang chế độ sáng" : "Chuyển sang chế độ tối"}
-            title={theme === "dark" ? "Light mode" : "Dark mode"}
+            onClick={() => setIsSettingsOpen(true)}
+            aria-label="Mở cài đặt"
+            title="Settings"
           >
-            {theme === "dark" ? <IconSun size={14} /> : <IconMoon size={14} />}
+            <IconSettings size={14} />
           </button>
         </section>
       </header>
@@ -1221,14 +1664,166 @@ function App() {
                 <div className="tab-list">
                   {pane.tabs.map((tab) => {
                     const tabTitle = getTabTitle(tab);
+                    const tabKey = `${pane.id}:${tab.id}`;
+                    const isDragging = draggingTabKey === tabKey;
+                    const isDropBefore =
+                      tabDragOver?.paneId === pane.id &&
+                      tabDragOver?.tabId === tab.id &&
+                      tabDragOver?.before === true;
+                    const isDropAfter =
+                      tabDragOver?.paneId === pane.id &&
+                      tabDragOver?.tabId === tab.id &&
+                      tabDragOver?.before === false;
 
                     return (
                     <button
-                      className={tab.id === pane.activeTabId ? "tab active" : "tab"}
+                      className={
+                        (tab.id === pane.activeTabId ? "tab active" : "tab") +
+                        (isDragging ? " tab-dragging" : "") +
+                        (isDropBefore ? " tab-drop-before" : "") +
+                        (isDropAfter ? " tab-drop-after" : "")
+                      }
                       key={tab.id}
                       title={tabTitle}
                       draggable={false}
-                      onClick={() => updateActivePane(pane.id, (current) => ({ ...current, activeTabId: tab.id }))}
+                      onPointerDown={(event) => {
+                        if (event.button !== 0) return;
+                        // ignore pointerdown on the close button so it can fire its own click
+                        if ((event.target as HTMLElement).closest(".tab-close")) return;
+                        event.stopPropagation(); // don't trigger pane drag
+                        tabDrag.current = {
+                          paneId: pane.id,
+                          tabId: tab.id,
+                          pointerId: event.pointerId,
+                          startX: event.clientX,
+                          startY: event.clientY,
+                          active: false,
+                        };
+                      }}
+                      onPointerMove={(event) => {
+                        const drag = tabDrag.current;
+                        if (!drag || drag.pointerId !== event.pointerId) return;
+
+                        const distance = Math.hypot(
+                          event.clientX - drag.startX,
+                          event.clientY - drag.startY,
+                        );
+                        if (!drag.active && distance < 6) return;
+
+                        if (!drag.active) {
+                          drag.active = true;
+                          setDraggingTabKey(`${pane.id}:${tab.id}`);
+                          try {
+                            (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+                          } catch {
+                            // ignore
+                          }
+                        }
+
+                        // Find what we're hovering over.
+                        const elementUnderCursor = document.elementFromPoint(
+                          event.clientX,
+                          event.clientY,
+                        );
+                        const tabUnder = elementUnderCursor?.closest<HTMLElement>("[data-tab-id]");
+                        const paneUnder = elementUnderCursor?.closest<HTMLElement>("[data-pane-id]");
+
+                        if (tabUnder) {
+                          const overTabId = tabUnder.dataset.tabId!;
+                          const overPaneId = tabUnder.dataset.paneId!;
+                          // intra-pane → always allow; cross-pane → only same profile
+                          const sourcePane = activePanes.find((p) => p.id === drag.paneId);
+                          const overPane = activePanes.find((p) => p.id === overPaneId);
+                          if (
+                            overPaneId === drag.paneId ||
+                            (sourcePane && overPane &&
+                              sourcePane.profileId === overPane.profileId &&
+                              sourcePane.tabs.length > 1)
+                          ) {
+                            const rect = tabUnder.getBoundingClientRect();
+                            const before = event.clientX < rect.left + rect.width / 2;
+                            setTabDragOver({ paneId: overPaneId, tabId: overTabId, before });
+                            return;
+                          }
+                        }
+
+                        // hovering on a tab-list area (no specific tab) of another pane
+                        const tabListUnder = elementUnderCursor?.closest<HTMLElement>(".tab-list");
+                        if (tabListUnder && paneUnder && paneUnder.dataset.paneId !== drag.paneId) {
+                          const overPaneId = paneUnder.dataset.paneId!;
+                          const sourcePane = activePanes.find((p) => p.id === drag.paneId);
+                          const overPane = activePanes.find((p) => p.id === overPaneId);
+                          if (
+                            sourcePane && overPane &&
+                            sourcePane.profileId === overPane.profileId &&
+                            sourcePane.tabs.length > 1
+                          ) {
+                            setTabDragOver({ paneId: overPaneId, tabId: null, before: false });
+                            return;
+                          }
+                        }
+
+                        setTabDragOver(null);
+                      }}
+                      onPointerUp={(event) => {
+                        const drag = tabDrag.current;
+                        if (!drag || drag.pointerId !== event.pointerId) return;
+                        try {
+                          (event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId);
+                        } catch {
+                          // ignore
+                        }
+
+                        const wasActive = drag.active;
+                        const overlay = tabDragOver;
+                        tabDrag.current = null;
+                        setDraggingTabKey(null);
+                        setTabDragOver(null);
+
+                        if (!wasActive) {
+                          // simple click → switch active tab
+                          updateActivePane(pane.id, (current) => ({ ...current, activeTabId: tab.id }));
+                          return;
+                        }
+
+                        // Drop logic
+                        if (overlay) {
+                          if (overlay.tabId) {
+                            if (overlay.paneId === drag.paneId) {
+                              moveTabWithinPane(drag.paneId, drag.tabId, overlay.tabId, overlay.before);
+                            } else {
+                              moveTabAcrossPanes(
+                                drag.paneId,
+                                drag.tabId,
+                                overlay.paneId,
+                                overlay.tabId,
+                                overlay.before,
+                              );
+                            }
+                          } else {
+                            // dropped onto empty tab-list area of another pane
+                            moveTabAcrossPanes(drag.paneId, drag.tabId, overlay.paneId, null, false);
+                          }
+                          return;
+                        }
+
+                        // Dropped outside any tab → tear out
+                        const elementUnderCursor = document.elementFromPoint(
+                          event.clientX,
+                          event.clientY,
+                        );
+                        const droppedOnTabStrip = !!elementUnderCursor?.closest(".tab-strip");
+                        if (!droppedOnTabStrip) {
+                          detachTabToNewPane(drag.paneId, drag.tabId);
+                        }
+                      }}
+                      onPointerCancel={() => {
+                        tabDrag.current = null;
+                        setDraggingTabKey(null);
+                        setTabDragOver(null);
+                      }}
+                      data-tab-id={tab.id}
+                      data-pane-id={pane.id}
                     >
                       {tab.isLoading ? (
                         <span className="tab-spinner" aria-hidden="true" />
@@ -1406,6 +2001,150 @@ function App() {
                 {confirmDialog.confirmLabel ?? "OK"}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {isSettingsOpen && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setIsSettingsOpen(false);
+          }}
+        >
+          <div className="modal-card settings-card">
+            <header className="settings-header">
+              <h3 className="modal-title">Settings</h3>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => setIsSettingsOpen(false)}
+                aria-label="Đóng"
+              >
+                <IconX size={14} />
+              </button>
+            </header>
+
+            <section className="settings-section">
+              <h4 className="settings-section-title">Giao diện</h4>
+              <div className="settings-row">
+                <span className="settings-label">Chế độ</span>
+                <div className="layout-segment settings-theme-segment">
+                  <button
+                    type="button"
+                    className={theme === "light" ? "segment active" : "segment"}
+                    onClick={() => setTheme("light")}
+                  >
+                    <IconSun size={12} /> Sáng
+                  </button>
+                  <button
+                    type="button"
+                    className={theme === "dark" ? "segment active" : "segment"}
+                    onClick={() => setTheme("dark")}
+                  >
+                    <IconMoon size={12} /> Tối
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            <section className="settings-section">
+              <h4 className="settings-section-title">Cập nhật</h4>
+              <div className="settings-row">
+                <span className="settings-label">Phiên bản hiện tại</span>
+                <span className="settings-meta">v{APP_VERSION}</span>
+              </div>
+              <div className="settings-row settings-update-row">
+                {updateStatus.kind === "idle" && (
+                  <button type="button" className="modal-btn" onClick={checkForUpdates}>
+                    <IconRefresh size={12} /> Kiểm tra cập nhật
+                  </button>
+                )}
+                {updateStatus.kind === "checking" && (
+                  <span className="settings-meta">Đang kiểm tra…</span>
+                )}
+                {updateStatus.kind === "current" && (
+                  <span className="settings-meta success">Bạn đang dùng phiên bản mới nhất.</span>
+                )}
+                {updateStatus.kind === "available" && (
+                  <div className="settings-update-available">
+                    <span>
+                      Có bản mới: <strong>v{updateStatus.latest}</strong>
+                    </span>
+                    <button
+                      type="button"
+                      className="modal-btn primary"
+                      onClick={() => openReleasePage(updateStatus.releaseUrl)}
+                    >
+                      <IconExternal size={12} /> Mở trang tải
+                    </button>
+                  </div>
+                )}
+                {updateStatus.kind === "error" && (
+                  <span className="settings-meta danger">{updateStatus.message}</span>
+                )}
+              </div>
+            </section>
+
+            <section className="settings-section">
+              <h4 className="settings-section-title">Backup & khôi phục</h4>
+              <p className="settings-help">
+                <strong>Cấu hình</strong> chỉ chứa workspace và profile (không bao gồm cookie). <strong>Full backup</strong> kèm session đăng nhập.
+              </p>
+              <div className="settings-actions">
+                <button
+                  type="button"
+                  className="modal-btn"
+                  onClick={exportConfigJson}
+                  disabled={backupBusy !== "idle"}
+                >
+                  <IconDownload size={12} /> Xuất cấu hình (.json)
+                </button>
+                <button
+                  type="button"
+                  className="modal-btn"
+                  onClick={importConfigJson}
+                  disabled={backupBusy !== "idle"}
+                >
+                  <IconUpload size={12} /> Nhập cấu hình
+                </button>
+              </div>
+              <div className="settings-actions">
+                <button
+                  type="button"
+                  className="modal-btn"
+                  onClick={exportFullBackup}
+                  disabled={backupBusy !== "idle" || !isTauriRuntime()}
+                  title={!isTauriRuntime() ? "Chỉ chạy trong app desktop" : undefined}
+                >
+                  <IconDownload size={12} /> Full backup (.zip)
+                </button>
+                <button
+                  type="button"
+                  className="modal-btn"
+                  onClick={restoreFullBackup}
+                  disabled={backupBusy !== "idle" || !isTauriRuntime()}
+                  title={!isTauriRuntime() ? "Chỉ chạy trong app desktop" : undefined}
+                >
+                  <IconUpload size={12} /> Khôi phục từ backup
+                </button>
+              </div>
+            </section>
+
+            <footer className="settings-footer">
+              <a
+                href={`https://github.com/${GITHUB_REPO}`}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(event) => {
+                  event.preventDefault();
+                  openReleasePage(`https://github.com/${GITHUB_REPO}`);
+                }}
+              >
+                GitHub
+              </a>
+              <span className="settings-meta">v{APP_VERSION}</span>
+            </footer>
           </div>
         </div>
       )}

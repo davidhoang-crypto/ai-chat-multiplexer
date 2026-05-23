@@ -558,6 +558,135 @@ p {
 }
 
 /* ============================================================
+   SETTINGS MODAL
+   ============================================================ */
+.settings-card {
+  max-width: 480px;
+  gap: 16px;
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.settings-section {
+  display: grid;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.settings-section:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.settings-section-title {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+}
+
+.settings-label {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.settings-meta {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-left: auto;
+}
+
+.settings-meta.success {
+  color: var(--success);
+}
+
+.settings-meta.danger {
+  color: var(--danger);
+}
+
+.settings-help {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.settings-help strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.settings-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.settings-actions .modal-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.settings-update-row {
+  flex-wrap: wrap;
+}
+
+.settings-update-available {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+}
+
+.settings-theme-segment {
+  margin-left: auto;
+}
+
+.settings-theme-segment .segment {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.settings-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.settings-footer a {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.settings-footer a:hover {
+  text-decoration: underline;
+}
+
+/* ============================================================
    THEME TOGGLE
    ============================================================ */
 .theme-toggle {
@@ -942,6 +1071,18 @@ button:focus-visible {
   background: var(--surface);
   border-color: var(--border);
   font-weight: 500;
+}
+
+.tab.tab-dragging {
+  opacity: 0.4;
+}
+
+.tab.tab-drop-before {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.tab.tab-drop-after {
+  box-shadow: inset -2px 0 0 var(--accent);
 }
 
 .tab-favicon,

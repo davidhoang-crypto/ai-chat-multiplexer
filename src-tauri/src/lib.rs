@@ -1,9 +1,14 @@
-use std::path::PathBuf;
+use std::fs::File;
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tauri::{LogicalPosition, LogicalSize, Manager, WebviewBuilder, WebviewUrl};
+use walkdir::WalkDir;
+use zip::write::SimpleFileOptions;
+use zip::{ZipArchive, ZipWriter};
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -149,6 +154,20 @@ async fn native_webview_navigate(app: tauri::AppHandle, label: String, action: S
 }
 
 #[tauri::command]
+async fn native_webview_load_url(app: tauri::AppHandle, label: String, url: String) -> Result<(), String> {
+    let webview = app
+        .get_webview(&label)
+        .ok_or_else(|| "Không tìm thấy webview đang mở".to_string())?;
+    let parsed: url::Url = url
+        .parse()
+        .map_err(|error| format!("URL không hợp lệ: {error}"))?;
+    webview
+        .navigate(parsed)
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 async fn native_webview_tab_status(app: tauri::AppHandle, label: String) -> Result<NativeTabStatus, String> {
     let webview = app
         .get_webview(&label)
@@ -193,17 +212,115 @@ async fn native_webview_tab_status(app: tauri::AppHandle, label: String) -> Resu
     Ok(status)
 }
 
+fn pane_sessions_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    Ok(app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?
+        .join("pane-sessions"))
+}
+
+fn add_dir_to_zip<W: Write + std::io::Seek>(
+    zip: &mut ZipWriter<W>,
+    base_dir: &Path,
+    src: &Path,
+    options: SimpleFileOptions,
+) -> Result<(), String> {
+    for entry in WalkDir::new(src) {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let path = entry.path();
+        let relative = path
+            .strip_prefix(base_dir)
+            .map_err(|error| error.to_string())?;
+        let name = relative.to_string_lossy().replace('\\', "/");
+
+        if path.is_dir() {
+            if !name.is_empty() {
+                zip.add_directory(format!("{}/", name), options)
+                    .map_err(|error| error.to_string())?;
+            }
+            continue;
+        }
+
+        zip.start_file(&name, options)
+            .map_err(|error| error.to_string())?;
+        let mut file = File::open(path).map_err(|error| error.to_string())?;
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer)
+            .map_err(|error| error.to_string())?;
+        zip.write_all(&buffer)
+            .map_err(|error| error.to_string())?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn backup_sessions_zip(app: tauri::AppHandle, output_path: String) -> Result<(), String> {
+    let root = pane_sessions_root(&app)?;
+    if !root.exists() {
+        return Err("Chưa có session nào để backup".to_string());
+    }
+
+    let file = File::create(&output_path).map_err(|error| error.to_string())?;
+    let mut zip = ZipWriter::new(file);
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+
+    add_dir_to_zip(&mut zip, &root, &root, options)?;
+    zip.finish().map_err(|error| error.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn restore_sessions_zip(app: tauri::AppHandle, input_path: String) -> Result<(), String> {
+    let root = pane_sessions_root(&app)?;
+    std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+
+    let file = File::open(&input_path).map_err(|error| error.to_string())?;
+    let mut archive = ZipArchive::new(file).map_err(|error| error.to_string())?;
+
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).map_err(|error| error.to_string())?;
+        let outpath = match entry.enclosed_name() {
+            Some(path) => root.join(path),
+            None => continue,
+        };
+
+        if entry.is_dir() {
+            std::fs::create_dir_all(&outpath).map_err(|error| error.to_string())?;
+            continue;
+        }
+
+        if let Some(parent) = outpath.parent() {
+            if !parent.exists() {
+                std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            }
+        }
+
+        let mut outfile = File::create(&outpath).map_err(|error| error.to_string())?;
+        std::io::copy(&mut entry, &mut outfile).map_err(|error| error.to_string())?;
+    }
+
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .invoke_handler(tauri::generate_handler![
             native_webview_upsert,
             native_webview_hide,
             native_webview_close,
             native_webview_navigate,
+            native_webview_load_url,
             native_webview_tab_status,
-            delete_profile_session
+            delete_profile_session,
+            backup_sessions_zip,
+            restore_sessions_zip
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -81,6 +81,42 @@
     margin: -16px 0 0;
     letter-spacing: -0.005em;
   }
+  .search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    max-width: 560px;
+    margin: 0 auto;
+    padding: 0 16px;
+    height: 48px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    transition: border-color 140ms ease, box-shadow 140ms ease;
+  }
+  .search:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent), transparent 80%), var(--shadow);
+  }
+  .search svg {
+    flex-shrink: 0;
+    color: var(--text-secondary);
+  }
+  .search input {
+    flex: 1 1 auto;
+    height: 100%;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-size: 15px;
+  }
+  .search input::placeholder {
+    color: var(--text-secondary);
+  }
   .grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -162,6 +198,13 @@
       <span class="wordmark">AI Multiplexer</span>
     </div>
     <p class="tagline">Mở nhanh một dịch vụ AI</p>
+    <form class="search" id="search-form" role="search" aria-label="Tìm kiếm trên Google">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="11" cy="11" r="8"></circle>
+        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+      </svg>
+      <input id="search-input" type="text" placeholder="Tìm trên Google hoặc nhập địa chỉ" autocomplete="off" autofocus />
+    </form>
     <nav class="grid" aria-label="Quick links">
       <a class="card" href="https://chatgpt.com" data-target="https://chatgpt.com">
         <span class="logo-wrap"><img src="https://www.google.com/s2/favicons?domain=chatgpt.com&sz=64" alt="" referrerpolicy="no-referrer"/></span>
@@ -191,6 +234,28 @@
     <p class="footer">Hoặc nhập địa chỉ tùy ý vào ô URL phía trên</p>
   </main>
   <script>
+    function resolveAddress(input) {
+      var trimmed = (input || "").trim();
+      if (!trimmed) return null;
+      if (/^[a-z][a-z\d+.-]*:/i.test(trimmed)) return trimmed;
+      if (/^(localhost|127\.0\.0\.1)(:\d+)?(\/.*)?$/i.test(trimmed)) return "http://" + trimmed;
+      if (!/\s/.test(trimmed) && /^[\w-]+(\.[\w-]+)+([:/?#].*)?$/i.test(trimmed)) {
+        return "https://" + trimmed;
+      }
+      return "https://www.google.com/search?q=" + encodeURIComponent(trimmed);
+    }
+
+    var form = document.getElementById('search-form');
+    var input = document.getElementById('search-input');
+    if (form && input) {
+      form.addEventListener('submit', function (event) {
+        event.preventDefault();
+        var url = resolveAddress(input.value);
+        if (!url) return;
+        try { window.top.location.assign(url); } catch (e) { window.location.assign(url); }
+      });
+    }
+
     // Force same-window navigation in case any platform tries to open externally
     document.addEventListener('click', function (event) {
       var link = event.target.closest('a[data-target]');
