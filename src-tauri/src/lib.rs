@@ -5,10 +5,32 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use tauri::{LogicalPosition, LogicalSize, Manager, WebviewBuilder, WebviewUrl};
+use tauri::webview::DownloadEvent;
+use tauri::{Emitter, LogicalPosition, LogicalSize, Manager, WebviewBuilder, WebviewUrl};
+use tauri_plugin_dialog::DialogExt;
 use walkdir::WalkDir;
 use zip::write::SimpleFileOptions;
 use zip::{ZipArchive, ZipWriter};
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+enum DownloadProgress {
+    #[serde(rename = "started")]
+    Started {
+        label: String,
+        url: String,
+        path: String,
+    },
+    #[serde(rename = "finished")]
+    Finished {
+        label: String,
+        url: String,
+        path: Option<String>,
+        success: bool,
+    },
+    #[serde(rename = "cancelled")]
+    Cancelled { label: String, url: String },
+}
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -57,6 +79,45 @@ fn profile_session_directory(app: &tauri::AppHandle, profile_id: &str) -> Result
     Ok(session_dir)
 }
 
+fn suggested_filename(destination: &Path, url: &str) -> String {
+    if let Some(name) = destination.file_name().and_then(|n| n.to_str()) {
+        if !name.is_empty() {
+            return name.to_string();
+        }
+    }
+
+    if let Ok(parsed) = url::Url::parse(url) {
+        if let Some(segment) = parsed.path_segments().and_then(|mut s| s.next_back()) {
+            let decoded = urlencoding_decode(segment);
+            let trimmed = decoded.trim();
+            if !trimmed.is_empty() {
+                return trimmed.to_string();
+            }
+        }
+    }
+
+    "download".to_string()
+}
+
+fn urlencoding_decode(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let bytes = input.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or("");
+            if let Ok(code) = u8::from_str_radix(hex, 16) {
+                out.push(code as char);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i] as char);
+        i += 1;
+    }
+    out
+}
+
 #[tauri::command]
 async fn native_webview_upsert(
     app: tauri::AppHandle,
@@ -87,9 +148,133 @@ async fn native_webview_upsert(
         .get_window("main")
         .ok_or_else(|| "Không tìm thấy cửa sổ chính".to_string())?;
     let session_dir = profile_session_directory(&app, &profile_id)?;
+    let download_app = app.clone();
+    let download_label = label.clone();
     let webview_builder = WebviewBuilder::new(&label, parse_webview_url(&url)?)
         .data_directory(session_dir)
-        .enable_clipboard_access();
+        .enable_clipboard_access()
+        .on_download(move |_webview, event| match event {
+            DownloadEvent::Requested { url, destination } => {
+                let suggested = suggested_filename(&destination, url.as_str());
+                let chosen = download_app
+                    .dialog()
+                    .file()
+                    .set_title("Lưu file đã tải")
+                    .set_file_name(&suggested)
+                    .blocking_save_file();
+
+                match chosen {
+                    Some(file_path) => match file_path.into_path() {
+                        Ok(path) => {
+                            *destination = path.clone();
+                            let _ = download_app.emit(
+                                "native-webview-download",
+                                DownloadProgress::Started {
+                                    label: download_label.clone(),
+                                    url: url.to_string(),
+                                    path: path.to_string_lossy().into_owned(),
+                                },
+                            );
+
+                            // Workaround: WebView2 on Windows often does NOT fire
+                            // DownloadEvent::Finished. Poll the file size; when it
+                            // stops growing for a few ticks, assume the download
+                            // is complete and emit Finished ourselves.
+                            let watch_app = download_app.clone();
+                            let watch_label = download_label.clone();
+                            let watch_url = url.to_string();
+                            let watch_path = path.clone();
+                            std::thread::spawn(move || {
+                                let mut last_size: u64 = 0;
+                                let mut stable_ticks: u32 = 0;
+                                let mut total_ticks: u32 = 0;
+                                // Poll up to ~10 minutes (600s).
+                                while total_ticks < 1200 {
+                                    std::thread::sleep(Duration::from_millis(500));
+                                    total_ticks += 1;
+                                    let size = std::fs::metadata(&watch_path)
+                                        .map(|m| m.len())
+                                        .unwrap_or(0);
+                                    if size > 0 && size == last_size {
+                                        stable_ticks += 1;
+                                        // 3 ticks * 500ms = 1.5s of no growth.
+                                        if stable_ticks >= 3 {
+                                            let _ = watch_app.emit(
+                                                "native-webview-download",
+                                                DownloadProgress::Finished {
+                                                    label: watch_label.clone(),
+                                                    url: watch_url.clone(),
+                                                    path: Some(
+                                                        watch_path.to_string_lossy().into_owned(),
+                                                    ),
+                                                    success: true,
+                                                },
+                                            );
+                                            return;
+                                        }
+                                    } else {
+                                        stable_ticks = 0;
+                                        last_size = size;
+                                    }
+                                }
+                                // Timeout — emit a finished/error so the UI doesn't hang.
+                                let _ = watch_app.emit(
+                                    "native-webview-download",
+                                    DownloadProgress::Finished {
+                                        label: watch_label.clone(),
+                                        url: watch_url.clone(),
+                                        path: Some(watch_path.to_string_lossy().into_owned()),
+                                        success: false,
+                                    },
+                                );
+                            });
+
+                            true
+                        }
+                        Err(_) => {
+                            let _ = download_app.emit(
+                                "native-webview-download",
+                                DownloadProgress::Cancelled {
+                                    label: download_label.clone(),
+                                    url: url.to_string(),
+                                },
+                            );
+                            false
+                        }
+                    },
+                    None => {
+                        let _ = download_app.emit(
+                            "native-webview-download",
+                            DownloadProgress::Cancelled {
+                                label: download_label.clone(),
+                                url: url.to_string(),
+                            },
+                        );
+                        false
+                    }
+                }
+            }
+            DownloadEvent::Finished { url, path, success } => {
+                eprintln!(
+                    "[download] finished label={} url={} path={:?} success={}",
+                    download_label,
+                    url,
+                    path,
+                    success,
+                );
+                let _ = download_app.emit(
+                    "native-webview-download",
+                    DownloadProgress::Finished {
+                        label: download_label.clone(),
+                        url: url.to_string(),
+                        path: path.as_ref().map(|p| p.to_string_lossy().into_owned()),
+                        success,
+                    },
+                );
+                true
+            }
+            _ => true,
+        });
 
     window
         .add_child(
@@ -305,6 +490,46 @@ async fn restore_sessions_zip(app: tauri::AppHandle, input_path: String) -> Resu
     Ok(())
 }
 
+#[tauri::command]
+async fn reveal_path_in_folder(path: String) -> Result<(), String> {
+    let target = PathBuf::from(&path);
+    let folder = if target.is_file() {
+        target.parent().map(|p| p.to_path_buf()).unwrap_or(target)
+    } else {
+        target
+    };
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(folder)
+            .spawn()
+            .map_err(|error| error.to_string())?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(folder)
+            .spawn()
+            .map_err(|error| error.to_string())?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(folder)
+            .spawn()
+            .map_err(|error| error.to_string())?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn quit_app(app: tauri::AppHandle) -> Result<(), String> {
+    app.exit(0);
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -320,7 +545,9 @@ pub fn run() {
             native_webview_tab_status,
             delete_profile_session,
             backup_sessions_zip,
-            restore_sessions_zip
+            restore_sessions_zip,
+            reveal_path_in_folder,
+            quit_app
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

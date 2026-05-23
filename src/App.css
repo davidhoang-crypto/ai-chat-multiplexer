@@ -97,30 +97,14 @@ p {
 }
 
 .brand-badge {
-  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  height: 36px;
-  padding: 0 14px 0 8px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0)),
-    var(--surface-2);
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.12) inset,
-    0 6px 16px rgba(184, 134, 11, 0.10);
-  overflow: hidden;
-  transition: transform 220ms ease, box-shadow 220ms ease, border-color 220ms ease;
-}
-
-.brand-badge:hover {
-  transform: translateY(-1px);
-  border-color: color-mix(in srgb, var(--accent), transparent 50%);
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.15) inset,
-    0 10px 24px rgba(184, 134, 11, 0.18);
+  height: 32px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .brand-mark {
@@ -131,7 +115,13 @@ p {
   place-items: center;
   border-radius: 7px;
   overflow: hidden;
-  filter: drop-shadow(0 2px 6px rgba(184, 134, 11, 0.35));
+  filter: drop-shadow(0 2px 6px rgba(184, 134, 11, 0.30));
+  transition: filter 220ms ease, transform 220ms ease;
+}
+
+.brand-mark:hover {
+  filter: drop-shadow(0 3px 10px rgba(184, 134, 11, 0.45));
+  transform: translateY(-1px);
 }
 
 .brand-mark svg {
@@ -143,29 +133,40 @@ p {
 .brand-wordmark {
   flex-shrink: 0;
   display: block;
+  -webkit-mask-image: linear-gradient(
+    100deg,
+    rgba(0, 0, 0, 1) 0%,
+    rgba(0, 0, 0, 1) 35%,
+    rgba(0, 0, 0, 0.55) 50%,
+    rgba(0, 0, 0, 1) 65%,
+    rgba(0, 0, 0, 1) 100%
+  );
+  -webkit-mask-size: 220% 100%;
+  mask-image: linear-gradient(
+    100deg,
+    rgba(0, 0, 0, 1) 0%,
+    rgba(0, 0, 0, 1) 35%,
+    rgba(0, 0, 0, 0.55) 50%,
+    rgba(0, 0, 0, 1) 65%,
+    rgba(0, 0, 0, 1) 100%
+  );
+  mask-size: 220% 100%;
+  animation: brand-wordmark-shimmer 4.5s ease-in-out infinite;
+}
+
+@keyframes brand-wordmark-shimmer {
+  0%, 25% {
+    -webkit-mask-position: 120% 0;
+    mask-position: 120% 0;
+  }
+  75%, 100% {
+    -webkit-mask-position: -20% 0;
+    mask-position: -20% 0;
+  }
 }
 
 .brand-shimmer {
-  position: absolute;
-  top: 0;
-  left: -40%;
-  width: 40%;
-  height: 100%;
-  pointer-events: none;
-  background: linear-gradient(
-    100deg,
-    transparent 0%,
-    transparent 30%,
-    rgba(255, 230, 160, 0.18) 50%,
-    transparent 70%,
-    transparent 100%
-  );
-  animation: brand-shimmer 4.5s ease-in-out infinite;
-}
-
-@keyframes brand-shimmer {
-  0%, 20% { left: -40%; }
-  60%, 100% { left: 110%; }
+  display: none;
 }
 
 .workspace-center {
@@ -206,13 +207,13 @@ p {
 .workspace-switcher summary {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   height: 26px;
-  padding: 0 6px 0 4px;
-  border: 1px solid transparent;
+  padding: 0 10px 0 10px;
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
   color: var(--text);
-  background: transparent;
+  background: var(--surface-2);
   font-size: 13px;
   font-weight: 600;
   letter-spacing: -0.01em;
@@ -222,12 +223,19 @@ p {
 }
 
 .workspace-switcher summary:hover {
-  background: var(--surface-2);
+  background: var(--surface-3);
+  border-color: var(--border-strong);
 }
 
 .workspace-switcher[open] summary {
-  background: var(--surface-2);
-  border-color: var(--border);
+  background: var(--surface-3);
+  border-color: var(--border-strong);
+}
+
+.workspace-pane-count {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .workspace-switcher summary::-webkit-details-marker {
@@ -515,6 +523,34 @@ p {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 4px;
+}
+
+.close-confirm-card {
+  outline: none;
+}
+
+.close-confirm-remember {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 8px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+}
+
+.close-confirm-remember input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.close-confirm-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .modal-btn {
@@ -1456,4 +1492,302 @@ button:focus-visible {
   .running {
     display: none;
   }
+}
+
+/* ============================================================
+   DOWNLOAD TOAST
+   ============================================================ */
+.downloads-button {
+  position: relative;
+}
+
+.downloads-button-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--surface);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.download-toast-stack {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 1000;
+  pointer-events: none;
+}
+
+.download-toast {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: start;
+  gap: 10px;
+  width: 320px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  pointer-events: auto;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.download-toast-success {
+  border-color: color-mix(in srgb, var(--success), transparent 60%);
+}
+
+.download-toast-error {
+  border-color: color-mix(in srgb, var(--danger), transparent 50%);
+}
+
+.download-toast-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--surface-2);
+  color: var(--text-secondary);
+}
+
+.download-toast-downloading .download-toast-icon {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.download-toast-success .download-toast-icon {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success), transparent 85%);
+}
+
+.download-toast-error .download-toast-icon {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger), transparent 85%);
+}
+
+.download-toast-body {
+  min-width: 0;
+}
+
+.download-toast-title {
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 2px;
+}
+
+.download-toast-name {
+  font-size: 12px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.download-toast-actions {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.download-toast-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 11px;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.download-toast-link:hover {
+  color: color-mix(in srgb, var(--accent), black 15%);
+}
+
+.download-toast-sep {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.download-toast-close {
+  background: none;
+  border: none;
+  padding: 2px;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+}
+
+.download-toast-close:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+/* ============================================================
+   DOWNLOAD MANAGER PANEL
+   ============================================================ */
+.downloads-panel {
+  position: fixed;
+  top: 56px;
+  right: 12px;
+  z-index: 2147483646;
+  width: 360px;
+  max-height: min(560px, calc(100vh - 80px));
+  display: grid;
+  grid-template-rows: auto 1fr;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+.downloads-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.downloads-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.downloads-empty {
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.downloads-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  overflow-y: auto;
+  display: grid;
+  gap: 4px;
+}
+
+.downloads-item {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  align-items: start;
+  gap: 10px;
+  padding: 10px;
+  border-radius: var(--radius-md);
+  background: transparent;
+  transition: background 120ms ease;
+}
+
+.downloads-item:hover {
+  background: var(--surface-2);
+}
+
+.downloads-item-icon {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+}
+
+.downloads-item-success .downloads-item-icon {
+  color: var(--success);
+}
+
+.downloads-item-error .downloads-item-icon {
+  color: var(--danger);
+}
+
+.downloads-item-downloading .downloads-item-icon {
+  color: var(--accent);
+}
+
+.downloads-item-body {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.downloads-item-name {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.downloads-item-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.downloads-progress {
+  position: relative;
+  flex: 1 1 auto;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.downloads-progress-bar {
+  position: absolute;
+  inset: 0;
+  width: 35%;
+  background: var(--accent);
+  border-radius: inherit;
+  animation: downloads-progress-slide 1.4s ease-in-out infinite;
+}
+
+@keyframes downloads-progress-slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(285%); }
+}
+
+.downloads-status {
+  font-weight: 500;
+}
+
+.downloads-status.downloading {
+  color: var(--accent);
+}
+
+.downloads-status.success {
+  color: var(--success);
+}
+
+.downloads-status.error {
+  color: var(--danger);
+}
+
+.downloads-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
 }

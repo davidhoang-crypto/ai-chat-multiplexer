@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef, useState } from "react";
 import "./App.css";
 import {
@@ -6,382 +7,55 @@ import {
   AppWordmark,
   IconArrowLeft,
   IconArrowRight,
-  IconCheck,
-  IconChevronDown,
   IconDownload,
   IconEdit,
-  IconExternal,
   IconMaximize,
   IconMinimize,
-  IconMoon,
   IconPlus,
   IconRefresh,
   IconSettings,
-  IconSun,
   IconTrash,
-  IconUpload,
   IconX,
 } from "./Icons";
-import { getNewTabUrl, isNewTabUrl, NEW_TAB_TITLE } from "./newtab";
-
-type ChatTab = {
-  id: string;
-  title: string;
-  url: string;
-  loadedUrl: string;
-  currentUrl?: string;
-  faviconUrl?: string;
-  isLoading?: boolean;
-};
-
-type NativeTabStatus = {
-  title: string;
-  url: string;
-  faviconUrl: string;
-  isLoading: boolean;
-};
-
-type ChatPane = {
-  id: string;
-  title: string;
-  profileId: string;
-  tabs: ChatTab[];
-  activeTabId: string;
-};
-
-type Workspace = {
-  id: string;
-  name: string;
-  columns: number;
-  panes: ChatPane[];
-};
-
-type Profile = {
-  id: string;
-  name: string;
-};
-
-type AppState = {
-  workspaces: Workspace[];
-  activeWorkspaceId: string;
-  profiles: Profile[];
-};
-
-const STORAGE_KEY = "ai-chat-multiplexer-state-v5";
-const LEGACY_STATE_V4_KEY = "ai-chat-multiplexer-state-v4";
-const LEGACY_STATE_V3_KEY = "ai-chat-multiplexer-state-v3";
-const LEGACY_LAYOUT_KEY = "ai-chat-multiplexer-layout-v2";
-const THEME_STORAGE_KEY = "ai-chat-multiplexer-theme";
-const DEFAULT_URL = "https://search.brave.com/";
-const DEFAULT_PROFILE_ID = "prof-default";
-const APP_VERSION = "0.1.4";
-const GITHUB_REPO = "davidhoang-crypto/ai-chat-multiplexer";
-const RELEASES_URL = `https://github.com/${GITHUB_REPO}/releases/latest`;
-
-type ThemeMode = "light" | "dark";
-
-function createId(prefix: string) {
-  return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-
-function compareVersions(a: string, b: string): number {
-  const parse = (v: string) => v.split(/[.-]/).map((part) => Number.parseInt(part, 10) || 0);
-  const aa = parse(a);
-  const bb = parse(b);
-  const length = Math.max(aa.length, bb.length);
-  for (let index = 0; index < length; index += 1) {
-    const left = aa[index] ?? 0;
-    const right = bb[index] ?? 0;
-    if (left > right) return 1;
-    if (left < right) return -1;
-  }
-  return 0;
-}
-
-function createDefaultProfiles(): Profile[] {
-  return [{ id: DEFAULT_PROFILE_ID, name: "Default" }];
-}
-
-function createDefaultWorkspace(name = "Workspace 1"): Workspace {
-  const paneId = createId("pane");
-  const tabId = createId("tab");
-
-  return {
-    id: createId("ws"),
-    name,
-    columns: 1,
-    panes: [
-      {
-        id: paneId,
-        title: "Main Chat",
-        profileId: DEFAULT_PROFILE_ID,
-        activeTabId: tabId,
-        tabs: [{ id: tabId, title: "Brave", url: DEFAULT_URL, loadedUrl: DEFAULT_URL }],
-      },
-    ],
-  };
-}
-
-function createDefaultState(): AppState {
-  const workspace = createDefaultWorkspace();
-  return {
-    workspaces: [workspace],
-    activeWorkspaceId: workspace.id,
-    profiles: createDefaultProfiles(),
-  };
-}
-
-function normalizeUrl(url: string) {
-  const trimmed = url.trim();
-  if (!trimmed) return "about:blank";
-  if (/^[a-z][a-z\d+.-]*:/i.test(trimmed)) return trimmed;
-  return `https://${trimmed}`;
-}
-
-// Decide if a string is a real URL/host or a search query.
-// Used by the URL bar and the new-tab search box to mimic browser behavior.
-function resolveAddress(input: string): string {
-  const trimmed = input.trim();
-  if (!trimmed) return "about:blank";
-
-  // Already has a scheme — pass through.
-  if (/^[a-z][a-z\d+.-]*:/i.test(trimmed)) return trimmed;
-
-  // Plain "localhost", "localhost:1234" or IP-with-port → treat as URL.
-  if (/^(localhost|127\.0\.0\.1)(:\d+)?(\/.*)?$/i.test(trimmed)) {
-    return `http://${trimmed}`;
-  }
-
-  // No spaces and looks like a host (has a dot, no path-only tokens).
-  // Examples: "google.com", "search.brave.com/", "example.com/path?q=1".
-  if (!/\s/.test(trimmed) && /^[\w-]+(\.[\w-]+)+([:/?#].*)?$/i.test(trimmed)) {
-    return `https://${trimmed}`;
-  }
-
-  // Fall back to search engine.
-  return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
-}
-
-function isTauriRuntime() {
-  return "__TAURI_INTERNALS__" in window;
-}
-
-function getOriginFallbackIcon(url: string) {
-  try {
-    const parsed = new URL(normalizeUrl(url));
-    return `${parsed.origin}/favicon.ico`;
-  } catch {
-    return "";
-  }
-}
-
-function getDisplayUrl(tab: ChatTab) {
-  const url = tab.currentUrl || tab.url || tab.loadedUrl;
-  if (isNewTabUrl(url)) return "";
-  return url;
-}
-
-function getFallbackTabTitle(url: string) {
-  if (isNewTabUrl(url)) return NEW_TAB_TITLE;
-  try {
-    return new URL(normalizeUrl(url)).hostname.replace(/^www\./, "") || NEW_TAB_TITLE;
-  } catch {
-    return NEW_TAB_TITLE;
-  }
-}
-
-function getTabTitle(tab: ChatTab) {
-  return tab.title.trim() || getFallbackTabTitle(getDisplayUrl(tab));
-}
-
-function getTabKey(paneId: string, tabId: string) {
-  return `${paneId}:${tabId}`;
-}
-
-function isPaneDragControl(target: EventTarget | null) {
-  return target instanceof HTMLElement && Boolean(target.closest("button, input, select, summary, a, [role='button']"));
-}
-
-function getNativeWebviewLabel(_paneId: string, tab: ChatTab) {
-  // Use ONLY tab.id so the label stays stable when:
-  // - the tab is moved between panes (drag tear-out / reorder),
-  // - the tab navigates to a different URL.
-  // Both would otherwise close+recreate the webview and lose state.
-  return `tab-${tab.id}`.replace(/[^a-zA-Z0-9_-]/g, "-");
-}
-
-function hydrateTabs(tabs: ChatTab[]): ChatTab[] {
-  return tabs.map((tab) => ({
-    ...tab,
-    loadedUrl: tab.loadedUrl ?? tab.url,
-    currentUrl: tab.currentUrl ?? tab.loadedUrl ?? tab.url,
-    faviconUrl: tab.faviconUrl ?? getOriginFallbackIcon(tab.loadedUrl ?? tab.url),
-    isLoading: false,
-  }));
-}
-
-function migrateLegacyLayout(): Workspace | null {
-  const saved = window.localStorage.getItem(LEGACY_LAYOUT_KEY);
-  if (!saved) return null;
-
-  try {
-    const parsed = JSON.parse(saved) as { columns?: number; panes?: ChatPane[] };
-    if (!Array.isArray(parsed.panes) || parsed.panes.length === 0) return null;
-
-    return {
-      id: createId("ws"),
-      name: "Workspace 1",
-      columns: parsed.columns ?? 1,
-      panes: parsed.panes.map((pane) => ({
-        ...pane,
-        profileId: DEFAULT_PROFILE_ID,
-        tabs: hydrateTabs(pane.tabs ?? []),
-      })),
-    };
-  } catch {
-    return null;
-  }
-}
-
-function migrateLegacyV3(): { workspaces: Workspace[]; activeWorkspaceId: string } | null {
-  const saved = window.localStorage.getItem(LEGACY_STATE_V3_KEY);
-  if (!saved) return null;
-
-  try {
-    const parsed = JSON.parse(saved) as {
-      workspaces?: Array<Workspace & { panes: Array<ChatPane & { profileId?: string }> }>;
-      activeWorkspaceId?: string;
-    };
-    if (!Array.isArray(parsed.workspaces) || parsed.workspaces.length === 0) return null;
-
-    const workspaces = parsed.workspaces.map((ws) => ({
-      ...ws,
-      panes: ws.panes.map((pane) => ({
-        ...pane,
-        profileId: DEFAULT_PROFILE_ID,
-        tabs: hydrateTabs(pane.tabs ?? []),
-      })),
-    }));
-
-    const activeId =
-      parsed.activeWorkspaceId && workspaces.some((ws) => ws.id === parsed.activeWorkspaceId)
-        ? parsed.activeWorkspaceId
-        : workspaces[0].id;
-
-    return { workspaces, activeWorkspaceId: activeId };
-  } catch {
-    return null;
-  }
-}
-
-function migrateLegacyV4(): AppState | null {
-  // v4 had per-preset profiles like { id, presetId, name }. Collapse them by name
-  // into a single shared profile list. All "Default" become the global Default.
-  const saved = window.localStorage.getItem(LEGACY_STATE_V4_KEY);
-  if (!saved) return null;
-
-  try {
-    const parsed = JSON.parse(saved) as {
-      workspaces?: Array<Workspace & { panes: Array<ChatPane & { profileId?: string }> }>;
-      activeWorkspaceId?: string;
-      profiles?: Array<{ id: string; name: string; presetId?: string }>;
-    };
-    if (!Array.isArray(parsed.workspaces) || parsed.workspaces.length === 0) return null;
-
-    // Build a name -> new profile id map. Keep names unique.
-    const nameToId = new Map<string, string>();
-    nameToId.set("Default", DEFAULT_PROFILE_ID);
-
-    const oldIdToNewId = new Map<string, string>();
-    (parsed.profiles ?? []).forEach((p) => {
-      const name = (p.name ?? "Default").trim() || "Default";
-      let mappedId = nameToId.get(name);
-      if (!mappedId) {
-        mappedId = createId("prof");
-        nameToId.set(name, mappedId);
-      }
-      oldIdToNewId.set(p.id, mappedId);
-    });
-
-    const profiles: Profile[] = Array.from(nameToId.entries()).map(([name, id]) => ({ id, name }));
-
-    const workspaces = parsed.workspaces.map((ws) => ({
-      ...ws,
-      panes: ws.panes.map((pane) => ({
-        ...pane,
-        profileId: pane.profileId
-          ? oldIdToNewId.get(pane.profileId) ?? DEFAULT_PROFILE_ID
-          : DEFAULT_PROFILE_ID,
-        tabs: hydrateTabs(pane.tabs ?? []),
-      })),
-    }));
-
-    const activeId =
-      parsed.activeWorkspaceId && workspaces.some((ws) => ws.id === parsed.activeWorkspaceId)
-        ? parsed.activeWorkspaceId
-        : workspaces[0].id;
-
-    return { workspaces, activeWorkspaceId: activeId, profiles };
-  } catch {
-    return null;
-  }
-}
-
-function loadAppState(): AppState {
-  const saved = window.localStorage.getItem(STORAGE_KEY);
-
-  if (saved) {
-    try {
-      const parsed = JSON.parse(saved) as AppState;
-      if (Array.isArray(parsed.workspaces) && parsed.workspaces.length > 0) {
-        const profiles =
-          Array.isArray(parsed.profiles) && parsed.profiles.length > 0
-            ? parsed.profiles
-            : createDefaultProfiles();
-
-        const profileIds = new Set(profiles.map((p) => p.id));
-        const workspaces = parsed.workspaces.map((ws) => ({
-          ...ws,
-          panes: ws.panes.map((pane) => ({
-            ...pane,
-            profileId: profileIds.has(pane.profileId) ? pane.profileId : DEFAULT_PROFILE_ID,
-            tabs: hydrateTabs(pane.tabs ?? []),
-          })),
-        }));
-        const activeId = workspaces.some((ws) => ws.id === parsed.activeWorkspaceId)
-          ? parsed.activeWorkspaceId
-          : workspaces[0].id;
-        return { workspaces, activeWorkspaceId: activeId, profiles };
-      }
-    } catch {
-      // fall through to default
-    }
-  }
-
-  const v4 = migrateLegacyV4();
-  if (v4) {
-    window.localStorage.removeItem(LEGACY_STATE_V4_KEY);
-    return v4;
-  }
-
-  const v3 = migrateLegacyV3();
-  if (v3) {
-    window.localStorage.removeItem(LEGACY_STATE_V3_KEY);
-    return { ...v3, profiles: createDefaultProfiles() };
-  }
-
-  const legacy = migrateLegacyLayout();
-  if (legacy) {
-    window.localStorage.removeItem(LEGACY_LAYOUT_KEY);
-    return {
-      workspaces: [legacy],
-      activeWorkspaceId: legacy.id,
-      profiles: createDefaultProfiles(),
-    };
-  }
-
-  return createDefaultState();
-}
+import { getNewTabUrl, NEW_TAB_TITLE } from "./newtab";
+import {
+  APP_VERSION,
+  DEFAULT_PROFILE_ID,
+  GITHUB_REPO,
+  RELEASES_URL,
+  STORAGE_KEY,
+  THEME_STORAGE_KEY,
+  compareVersions,
+  createDefaultProfiles,
+  createDefaultWorkspace,
+  createId,
+  getDisplayUrl,
+  getFallbackTabTitle,
+  getNativeWebviewLabel,
+  getOriginFallbackIcon,
+  getTabKey,
+  getTabTitle,
+  hydrateTabs,
+  isPaneDragControl,
+  isTauriRuntime,
+  loadAppState,
+  normalizeUrl,
+  resolveAddress,
+  type AppState,
+  type ChatPane,
+  type ChatTab,
+  type DownloadEventPayload,
+  type DownloadToast,
+  type NativeTabStatus,
+  type Profile,
+  type ThemeMode,
+  type Workspace,
+} from "./appCore";
+import { SettingsModal } from "./components/SettingsModal";
+import { DownloadToastStack } from "./components/DownloadToastStack";
+import { DownloadsPanel } from "./components/DownloadsPanel";
+import { WorkspaceSwitcher } from "./components/WorkspaceSwitcher";
+import { ConfirmDialog, TextPromptModal } from "./components/Modals";
 
 function App() {
   const [state, setState] = useState<AppState>(() => loadAppState());
@@ -432,6 +106,8 @@ function App() {
   } | null>(null);
   const [tabDragOver, setTabDragOver] = useState<{ paneId: string; tabId: string | null; before: boolean } | null>(null);
   const [draggingTabKey, setDraggingTabKey] = useState<string | null>(null);
+  const [downloadToasts, setDownloadToasts] = useState<DownloadToast[]>([]);
+  const [isDownloadsOpen, setIsDownloadsOpen] = useState(false);
 
   const activeWorkspace =
     state.workspaces.find((ws) => ws.id === state.activeWorkspaceId) ?? state.workspaces[0];
@@ -449,6 +125,7 @@ function App() {
     textPrompt !== null ||
     confirmDialog !== null ||
     isSettingsOpen ||
+    isDownloadsOpen ||
     draggingTabKey !== null;
 
   useEffect(() => {
@@ -459,10 +136,117 @@ function App() {
     window.localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
 
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+
+    const unlistenPromise = listen<DownloadEventPayload>(
+      "native-webview-download",
+      (event) => {
+        const payload = event.payload;
+        const fileNameFromPath = (path: string) => {
+          const match = path.match(/[^\\/]+$/);
+          return match ? match[0] : path;
+        };
+
+        if (payload.kind === "started") {
+          const id = `${payload.label}-${payload.path}`;
+          setDownloadToasts((prev) => [
+            ...prev.filter((toast) => toast.id !== id),
+            {
+              id,
+              status: "downloading",
+              fileName: fileNameFromPath(payload.path),
+              path: payload.path,
+              createdAt: Date.now(),
+            },
+          ]);
+        } else if (payload.kind === "finished") {
+          setDownloadToasts((prev) => {
+            // Try exact id match first (label + path), then fall back to a
+            // path-only match (different webview started the download but the
+            // file is the same).
+            const targetPath = payload.path;
+            const exactId = targetPath ? `${payload.label}-${targetPath}` : null;
+            let target = exactId ? prev.find((toast) => toast.id === exactId) : undefined;
+            if (!target && targetPath) {
+              target = prev.find(
+                (toast) => toast.path === targetPath && toast.status === "downloading",
+              );
+            }
+            if (!target) {
+              // Last resort: most recent download still in-progress for this label.
+              target = [...prev]
+                .reverse()
+                .find(
+                  (toast) =>
+                    toast.id.startsWith(`${payload.label}-`) && toast.status === "downloading",
+                );
+            }
+
+            const id = target?.id ?? exactId ?? `${payload.label}-${payload.url}`;
+            const path = payload.path ?? target?.path ?? null;
+            const fileName = path ? fileNameFromPath(path) : target?.fileName ?? "Tải xuống";
+            const newToast: DownloadToast = {
+              id,
+              status: payload.success ? "success" : "error",
+              fileName,
+              path,
+              createdAt: target?.createdAt ?? Date.now(),
+            };
+            const existing = prev.find((toast) => toast.id === id);
+            return existing
+              ? prev.map((toast) => (toast.id === id ? newToast : toast))
+              : [...prev, newToast];
+          });
+        } else if (payload.kind === "cancelled") {
+          // Người dùng huỷ — không cần toast.
+        }
+      },
+    );
+
+    return () => {
+      void unlistenPromise.then((unlisten) => unlisten());
+    };
+  }, []);
+
+  useEffect(() => {
+    const successOrError = downloadToasts.filter(
+      (toast) => toast.status === "success" || toast.status === "error",
+    );
+    if (successOrError.length === 0) return;
+
+    const timers = successOrError.map((toast) =>
+      window.setTimeout(() => {
+        setDownloadToasts((prev) => prev.filter((item) => item.id !== toast.id));
+      }, 6000),
+    );
+
+    return () => timers.forEach((timer) => window.clearTimeout(timer));
+  }, [downloadToasts]);
+
+  const dismissDownloadToast = (id: string) => {
+    setDownloadToasts((prev) => prev.filter((toast) => toast.id !== id));
+  };
+
+  const revealDownloadFile = (path: string) => {
+    void invoke("reveal_path_in_folder", { path }).catch((error) => {
+      console.error("reveal_path_in_folder failed", error);
+    });
+  };
+
+  const openDownloadFile = async (path: string) => {
+    try {
+      const { openPath } = await import("@tauri-apps/plugin-opener");
+      await openPath(path);
+    } catch (error) {
+      console.error("openPath failed", error);
+    }
+  };
+
   // Close dropdown menus when the user clicks outside of them.
   // Settings modal is intentionally excluded — it has its own backdrop.
   useEffect(() => {
-    if (!isNewPaneMenuOpen && !isWorkspaceMenuOpen) return;
+    if (!isNewPaneMenuOpen && !isWorkspaceMenuOpen && !isDownloadsOpen) return;
 
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as Element | null;
@@ -474,11 +258,14 @@ function App() {
       if (isWorkspaceMenuOpen && !target.closest(".workspace-switcher")) {
         setIsWorkspaceMenuOpen(false);
       }
+      if (isDownloadsOpen && !target.closest(".downloads-panel") && !target.closest(".downloads-button")) {
+        setIsDownloadsOpen(false);
+      }
     };
 
     window.addEventListener("pointerdown", handlePointerDown, true);
     return () => window.removeEventListener("pointerdown", handlePointerDown, true);
-  }, [isNewPaneMenuOpen, isWorkspaceMenuOpen]);
+  }, [isNewPaneMenuOpen, isWorkspaceMenuOpen, isDownloadsOpen]);
 
   useEffect(() => {
     if (!isTauriRuntime()) {
@@ -1413,80 +1200,17 @@ function App() {
         </section>
 
         <section className="workspace-center">
-          <details
-            className="workspace-switcher"
+          <WorkspaceSwitcher
+            workspaces={state.workspaces}
+            activeWorkspaceId={state.activeWorkspaceId}
+            activePaneCount={activePanes.length}
             open={isWorkspaceMenuOpen}
-            onToggle={(event) => setIsWorkspaceMenuOpen(event.currentTarget.open)}
-          >
-            <summary aria-label="Chọn workspace">
-              <span className="workspace-name">{activeWorkspace.name}</span>
-              <IconChevronDown size={12} className="caret" />
-            </summary>
-            <div className="preset-menu workspace-menu" role="menu" aria-label="Danh sách workspace">
-              {state.workspaces.map((ws) => (
-                <button
-                  key={ws.id}
-                  type="button"
-                  className={ws.id === state.activeWorkspaceId ? "workspace-item active" : "workspace-item"}
-                  onClick={() => {
-                    switchWorkspace(ws.id);
-                    setIsWorkspaceMenuOpen(false);
-                  }}
-                  role="menuitem"
-                >
-                  <span className="workspace-dot" aria-hidden="true">
-                    {ws.id === state.activeWorkspaceId ? <IconCheck size={12} /> : null}
-                  </span>
-                  <span>{ws.name}</span>
-                  <span className="workspace-meta">{ws.panes.length}</span>
-                </button>
-              ))}
-              <div className="menu-separator" role="separator" />
-              <button
-                type="button"
-                className="workspace-item"
-                onClick={() => {
-                  createWorkspace();
-                  setIsWorkspaceMenuOpen(false);
-                }}
-                role="menuitem"
-              >
-                <span className="workspace-dot" aria-hidden="true">
-                  <IconPlus size={12} />
-                </span>
-                <span>New workspace</span>
-              </button>
-              <button
-                type="button"
-                className="workspace-item"
-                onClick={() => {
-                  setIsWorkspaceMenuOpen(false);
-                  renameActiveWorkspace();
-                }}
-                role="menuitem"
-              >
-                <span className="workspace-dot" aria-hidden="true">
-                  <IconEdit size={12} />
-                </span>
-                <span>Rename current</span>
-              </button>
-              <button
-                type="button"
-                className="workspace-item danger-menu-item"
-                onClick={() => {
-                  setIsWorkspaceMenuOpen(false);
-                  deleteActiveWorkspace();
-                }}
-                disabled={state.workspaces.length <= 1}
-                role="menuitem"
-              >
-                <span className="workspace-dot" aria-hidden="true">
-                  <IconTrash size={12} />
-                </span>
-                <span>Delete current</span>
-              </button>
-            </div>
-          </details>
+            onOpenChange={setIsWorkspaceMenuOpen}
+            onSwitch={switchWorkspace}
+            onCreate={createWorkspace}
+            onRename={renameActiveWorkspace}
+            onDelete={deleteActiveWorkspace}
+          />
         </section>
 
         <section className="toolbar" aria-label="Điều khiển layout">
@@ -1582,6 +1306,18 @@ function App() {
               </button>
             </div>
           </details>
+          <button
+            type="button"
+            className="theme-toggle downloads-button"
+            onClick={() => setIsDownloadsOpen((open) => !open)}
+            aria-label="Tải xuống"
+            title="Tải xuống"
+          >
+            <IconDownload size={14} />
+            {downloadToasts.some((toast) => toast.status === "downloading") && (
+              <span className="downloads-button-dot" aria-hidden="true" />
+            )}
+          </button>
           <button
             type="button"
             className="theme-toggle"
@@ -1941,213 +1677,46 @@ function App() {
         })}
       </section>
 
-      {textPrompt && (
-        <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closeTextPrompt(); }}>
-          <form
-            className="modal-card"
-            onSubmit={(event) => {
-              event.preventDefault();
-              submitTextPrompt();
-            }}
-          >
-            <h3 className="modal-title">{textPrompt.title}</h3>
-            <input
-              autoFocus
-              className="modal-input"
-              value={textPromptValue}
-              placeholder={textPrompt.placeholder}
-              onChange={(event) => setTextPromptValue(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  closeTextPrompt();
-                }
-              }}
-            />
-            <div className="modal-actions">
-              <button type="button" className="modal-btn" onClick={closeTextPrompt}>
-                Hủy
-              </button>
-              <button type="submit" className="modal-btn primary">
-                Lưu
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
+      <TextPromptModal
+        prompt={textPrompt}
+        value={textPromptValue}
+        onValueChange={setTextPromptValue}
+        onClose={closeTextPrompt}
+        onSubmit={submitTextPrompt}
+      />
 
-      {confirmDialog && (
-        <div
-          className="modal-backdrop"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setConfirmDialog(null);
-          }}
-        >
-          <div className="modal-card">
-            <h3 className="modal-title">{confirmDialog.title}</h3>
-            <p className="modal-message">{confirmDialog.message}</p>
-            <div className="modal-actions">
-              <button type="button" className="modal-btn" onClick={() => setConfirmDialog(null)}>
-                Hủy
-              </button>
-              <button
-                type="button"
-                className={confirmDialog.danger ? "modal-btn danger" : "modal-btn primary"}
-                onClick={() => {
-                  confirmDialog.onConfirm();
-                  setConfirmDialog(null);
-                }}
-              >
-                {confirmDialog.confirmLabel ?? "OK"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ConfirmDialog dialog={confirmDialog} onClose={() => setConfirmDialog(null)} />
 
-      {isSettingsOpen && (
-        <div
-          className="modal-backdrop"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setIsSettingsOpen(false);
-          }}
-        >
-          <div className="modal-card settings-card">
-            <header className="settings-header">
-              <h3 className="modal-title">Settings</h3>
-              <button
-                type="button"
-                className="icon-button"
-                onClick={() => setIsSettingsOpen(false)}
-                aria-label="Đóng"
-              >
-                <IconX size={14} />
-              </button>
-            </header>
+      <SettingsModal
+        open={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        theme={theme}
+        onThemeChange={setTheme}
+        updateStatus={updateStatus}
+        onCheckForUpdates={checkForUpdates}
+        onOpenReleasePage={openReleasePage}
+        backupBusy={backupBusy}
+        onExportConfig={exportConfigJson}
+        onImportConfig={importConfigJson}
+        onExportFullBackup={exportFullBackup}
+        onRestoreFullBackup={restoreFullBackup}
+      />
 
-            <section className="settings-section">
-              <h4 className="settings-section-title">Giao diện</h4>
-              <div className="settings-row">
-                <span className="settings-label">Chế độ</span>
-                <div className="layout-segment settings-theme-segment">
-                  <button
-                    type="button"
-                    className={theme === "light" ? "segment active" : "segment"}
-                    onClick={() => setTheme("light")}
-                  >
-                    <IconSun size={12} /> Sáng
-                  </button>
-                  <button
-                    type="button"
-                    className={theme === "dark" ? "segment active" : "segment"}
-                    onClick={() => setTheme("dark")}
-                  >
-                    <IconMoon size={12} /> Tối
-                  </button>
-                </div>
-              </div>
-            </section>
+      <DownloadToastStack
+        toasts={downloadToasts}
+        onDismiss={dismissDownloadToast}
+        onOpenFile={(path) => void openDownloadFile(path)}
+        onRevealFolder={revealDownloadFile}
+      />
 
-            <section className="settings-section">
-              <h4 className="settings-section-title">Cập nhật</h4>
-              <div className="settings-row">
-                <span className="settings-label">Phiên bản hiện tại</span>
-                <span className="settings-meta">v{APP_VERSION}</span>
-              </div>
-              <div className="settings-row settings-update-row">
-                {updateStatus.kind === "idle" && (
-                  <button type="button" className="modal-btn" onClick={checkForUpdates}>
-                    <IconRefresh size={12} /> Kiểm tra cập nhật
-                  </button>
-                )}
-                {updateStatus.kind === "checking" && (
-                  <span className="settings-meta">Đang kiểm tra…</span>
-                )}
-                {updateStatus.kind === "current" && (
-                  <span className="settings-meta success">Bạn đang dùng phiên bản mới nhất.</span>
-                )}
-                {updateStatus.kind === "available" && (
-                  <div className="settings-update-available">
-                    <span>
-                      Có bản mới: <strong>v{updateStatus.latest}</strong>
-                    </span>
-                    <button
-                      type="button"
-                      className="modal-btn primary"
-                      onClick={() => openReleasePage(updateStatus.releaseUrl)}
-                    >
-                      <IconExternal size={12} /> Mở trang tải
-                    </button>
-                  </div>
-                )}
-                {updateStatus.kind === "error" && (
-                  <span className="settings-meta danger">{updateStatus.message}</span>
-                )}
-              </div>
-            </section>
-
-            <section className="settings-section">
-              <h4 className="settings-section-title">Backup & khôi phục</h4>
-              <p className="settings-help">
-                <strong>Cấu hình</strong> chỉ chứa workspace và profile (không bao gồm cookie). <strong>Full backup</strong> kèm session đăng nhập.
-              </p>
-              <div className="settings-actions">
-                <button
-                  type="button"
-                  className="modal-btn"
-                  onClick={exportConfigJson}
-                  disabled={backupBusy !== "idle"}
-                >
-                  <IconDownload size={12} /> Xuất cấu hình (.json)
-                </button>
-                <button
-                  type="button"
-                  className="modal-btn"
-                  onClick={importConfigJson}
-                  disabled={backupBusy !== "idle"}
-                >
-                  <IconUpload size={12} /> Nhập cấu hình
-                </button>
-              </div>
-              <div className="settings-actions">
-                <button
-                  type="button"
-                  className="modal-btn"
-                  onClick={exportFullBackup}
-                  disabled={backupBusy !== "idle" || !isTauriRuntime()}
-                  title={!isTauriRuntime() ? "Chỉ chạy trong app desktop" : undefined}
-                >
-                  <IconDownload size={12} /> Full backup (.zip)
-                </button>
-                <button
-                  type="button"
-                  className="modal-btn"
-                  onClick={restoreFullBackup}
-                  disabled={backupBusy !== "idle" || !isTauriRuntime()}
-                  title={!isTauriRuntime() ? "Chỉ chạy trong app desktop" : undefined}
-                >
-                  <IconUpload size={12} /> Khôi phục từ backup
-                </button>
-              </div>
-            </section>
-
-            <footer className="settings-footer">
-              <a
-                href={`https://github.com/${GITHUB_REPO}`}
-                target="_blank"
-                rel="noreferrer"
-                onClick={(event) => {
-                  event.preventDefault();
-                  openReleasePage(`https://github.com/${GITHUB_REPO}`);
-                }}
-              >
-                GitHub
-              </a>
-              <span className="settings-meta">v{APP_VERSION}</span>
-            </footer>
-          </div>
-        </div>
-      )}
+      <DownloadsPanel
+        open={isDownloadsOpen}
+        items={downloadToasts}
+        onClose={() => setIsDownloadsOpen(false)}
+        onClearAll={() => setDownloadToasts([])}
+        onOpenFile={(path) => void openDownloadFile(path)}
+        onRevealFolder={revealDownloadFile}
+      />
     </main>
   );
 }
