@@ -136,4 +136,13 @@ describe("AppHeader", () => {
     expect(ensure).toHaveBeenCalledWith("Bob");
     expect(props.addBlankPaneWithProfile).toHaveBeenCalledWith({ id: "prof-new", name: "New" });
   });
+
+  it("propagates new-pane menu open state via setIsNewPaneMenuOpen on details toggle", () => {
+    const props = defaultProps({ isNewPaneMenuOpen: false });
+    const { container } = render(<AppHeader {...props} />);
+    const details = container.querySelector("details.new-pane-menu") as HTMLDetailsElement;
+    details.open = true;
+    details.dispatchEvent(new Event("toggle"));
+    expect(props.setIsNewPaneMenuOpen).toHaveBeenCalledWith(true);
+  });
 });

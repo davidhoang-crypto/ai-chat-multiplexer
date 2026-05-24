@@ -7,11 +7,12 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (cmd: string, args?: unknown) => invokeSpy(cmd, args),
 }));
 
+let tauriRuntime = true;
 vi.mock("./appCore", async () => {
   const actual = await vi.importActual<typeof import("./appCore")>("./appCore");
   return {
     ...actual,
-    isTauriRuntime: () => true,
+    isTauriRuntime: () => tauriRuntime,
   };
 });
 
@@ -38,6 +39,7 @@ function makePane(id: string, activeTabId: string, url = "https://example.com"):
 describe("useNativeTabStatus", () => {
   beforeEach(() => {
     invokeSpy.mockReset();
+    tauriRuntime = true;
   });
 
   afterEach(() => {
@@ -195,5 +197,169 @@ describe("useNativeTabStatus", () => {
 
     vi.advanceTimersByTime(1200);
     await vi.waitFor(() => expect(invokeSpy).toHaveBeenCalledTimes(3));
+  });
+
+  it("is a no-op outside Tauri runtime", () => {
+    tauriRuntime = false;
+    const updateActivePane = vi.fn();
+    renderHook(() =>
+      useNativeTabStatus({
+        activePanes: [makePane("p1", "t1")],
+        focusedPaneId: null,
+        updateActivePane,
+      }),
+    );
+    expect(invokeSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not call updateActivePane after unmount (cancelled flag)", async () => {
+    let resolveInvoke: (value: unknown) => void;
+    const pending = new Promise((resolve) => {
+      resolveInvoke = resolve;
+    });
+    invokeSpy.mockReturnValue(pending);
+
+    const updateActivePane = vi.fn();
+    const { unmount } = renderHook(() =>
+      useNativeTabStatus({
+        activePanes: [makePane("p1", "t1")],
+        focusedPaneId: null,
+        updateActivePane,
+      }),
+    );
+    await waitFor(() => expect(invokeSpy).toHaveBeenCalled());
+    unmount();
+    resolveInvoke!({
+      title: "T",
+      url: "https://x.com",
+      faviconUrl: "",
+      isLoading: false,
+    });
+    // Allow microtasks to resolve.
+    await Promise.resolve();
+    expect(updateActivePane).not.toHaveBeenCalled();
+  });
+
+  it("preserves non-active tabs unchanged when status updates the active tab", async () => {
+    invokeSpy.mockResolvedValue({
+      title: "Active updated",
+      url: "https://active.com",
+      faviconUrl: "",
+      isLoading: false,
+    });
+    const updateActivePane = vi.fn();
+    const paneWithTwoTabs: ChatPane = {
+      id: "p1",
+      title: "Pane",
+      profileId: "prof-default",
+      activeTabId: "t-active",
+      tabs: [
+        { id: "t-other", title: "Other", url: "https://other.com", loadedUrl: "https://other.com" },
+        { id: "t-active", title: "old", url: "https://old.com", loadedUrl: "https://old.com" },
+      ],
+    };
+    renderHook(() =>
+      useNativeTabStatus({
+        activePanes: [paneWithTwoTabs],
+        focusedPaneId: null,
+        updateActivePane,
+      }),
+    );
+    await waitFor(() => expect(updateActivePane).toHaveBeenCalled());
+    const [, updater] = updateActivePane.mock.calls[0];
+    const updatedPane = updater(paneWithTwoTabs);
+    // Non-active tab returns the same reference (line 56 branch).
+    expect(updatedPane.tabs[0]).toBe(paneWithTwoTabs.tabs[0]);
+    // Active tab gets updated.
+    expect(updatedPane.tabs[1]).toMatchObject({
+      title: "Active updated",
+      url: "https://active.com",
+    });
+  });
+
+  it("swallows invoke rejections without crashing", async () => {
+    invokeSpy.mockRejectedValue(new Error("boom"));
+    const updateActivePane = vi.fn();
+    renderHook(() =>
+      useNativeTabStatus({
+        activePanes: [makePane("p1", "t1")],
+        focusedPaneId: null,
+        updateActivePane,
+      }),
+    );
+    await waitFor(() => expect(invokeSpy).toHaveBeenCalled());
+    await Promise.resolve();
+    expect(updateActivePane).not.toHaveBeenCalled();
+  });
+
+  it("falls back to existing tab.url when status.url is empty", async () => {
+    invokeSpy.mockResolvedValue({
+      title: "Updated title",
+      url: "",
+      faviconUrl: "",
+      isLoading: false,
+    });
+    const updateActivePane = vi.fn();
+    const panes = [makePane("p1", "t1", "https://existing.example")];
+    renderHook(() =>
+      useNativeTabStatus({ activePanes: panes, focusedPaneId: null, updateActivePane }),
+    );
+    await waitFor(() => expect(updateActivePane).toHaveBeenCalled());
+    const updated = updateActivePane.mock.calls[0][1](panes[0]);
+    expect(updated.tabs[0].url).toBe("https://existing.example");
+  });
+
+  it("falls back to tab.loadedUrl when status.url, tab.currentUrl, and tab.url are all empty (line 60 last branch)", async () => {
+    invokeSpy.mockResolvedValue({
+      title: "Updated title",
+      url: "",
+      faviconUrl: "",
+      isLoading: false,
+    });
+    const updateActivePane = vi.fn();
+    const paneWithLoadedOnly: ChatPane = {
+      id: "p1",
+      title: "Pane",
+      profileId: "prof-default",
+      activeTabId: "t1",
+      tabs: [
+        {
+          id: "t1",
+          title: "old",
+          url: "",
+          loadedUrl: "https://only-loaded.example",
+        },
+      ],
+    };
+    renderHook(() =>
+      useNativeTabStatus({
+        activePanes: [paneWithLoadedOnly],
+        focusedPaneId: null,
+        updateActivePane,
+      }),
+    );
+    await waitFor(() => expect(updateActivePane).toHaveBeenCalled());
+    const updated = updateActivePane.mock.calls[0][1](paneWithLoadedOnly);
+    expect(updated.tabs[0].url).toBe("https://only-loaded.example");
+  });
+
+  it("falls back to getFallbackTabTitle when status.title is whitespace", async () => {
+    invokeSpy.mockResolvedValue({
+      title: "   ",
+      url: "https://new.example/path",
+      faviconUrl: "",
+      isLoading: false,
+    });
+    const updateActivePane = vi.fn();
+    const panes = [makePane("p1", "t1", "https://existing.example")];
+    renderHook(() =>
+      useNativeTabStatus({ activePanes: panes, focusedPaneId: null, updateActivePane }),
+    );
+    await waitFor(() => expect(updateActivePane).toHaveBeenCalled());
+    const updated = updateActivePane.mock.calls[0][1](panes[0]);
+    // Title should NOT be the whitespace string — getFallbackTabTitle would return
+    // something derived from the URL host or path.
+    expect(updated.tabs[0].title.trim().length).toBeGreaterThan(0);
+    expect(updated.tabs[0].title).not.toBe("   ");
   });
 });

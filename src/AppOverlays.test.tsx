@@ -109,4 +109,41 @@ describe("AppOverlays", () => {
     fireEvent.click(panel.querySelector('button[aria-label="Đóng"]')!);
     expect(props.setIsDownloadsOpen).toHaveBeenCalledWith(false);
   });
+
+  it("DownloadsPanel 'Mở' button forwards path to openFile (line 117 arrow)", () => {
+    const successToast = makeToast({
+      status: "success",
+      path: "C:/dl/keep.zip",
+      fileName: "keep.zip",
+    });
+    const props = defaultProps({
+      isDownloadsOpen: true,
+      downloadToasts: [successToast],
+    });
+    render(<AppOverlays {...props} />);
+    const panel = document.querySelector(".downloads-panel")!;
+    // Find the "Mở file" button rendered inside the panel specifically (the
+    // DownloadToastStack also renders a sibling "Mở file" button outside it).
+    const buttons = Array.from(panel.querySelectorAll("button"));
+    const openFileBtn = buttons.find(
+      (btn) => btn.textContent?.trim() === "Mở file",
+    ) as HTMLButtonElement | undefined;
+    expect(openFileBtn).toBeDefined();
+    fireEvent.click(openFileBtn!);
+    expect(props.openFile).toHaveBeenCalledWith("C:/dl/keep.zip");
+  });
+
+  it("DownloadToastStack 'Mở file' / 'Mở folder' route to openFile and revealFolder", () => {
+    const successToast = makeToast({
+      status: "success",
+      path: "C:/dl/x.zip",
+      fileName: "x.zip",
+    });
+    const props = defaultProps({ downloadToasts: [successToast] });
+    render(<AppOverlays {...props} />);
+    fireEvent.click(screen.getAllByText("Mở file")[0]);
+    expect(props.openFile).toHaveBeenCalledWith("C:/dl/x.zip");
+    fireEvent.click(screen.getAllByText("Mở folder")[0]);
+    expect(props.revealFolder).toHaveBeenCalledWith("C:/dl/x.zip");
+  });
 });

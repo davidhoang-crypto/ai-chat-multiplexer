@@ -108,6 +108,37 @@ describe("TextPromptModal", () => {
     fireEvent.mouseDown(backdrop, { target: backdrop, currentTarget: backdrop });
     expect(onClose).toHaveBeenCalled();
   });
+
+  it("does NOT call onClose when mousedown originates inside the modal-card", () => {
+    const onClose = vi.fn();
+    const { container } = render(
+      <TextPromptModal
+        prompt={{ title: "T", initial: "", onSubmit: () => undefined }}
+        value=""
+        onValueChange={() => undefined}
+        onClose={onClose}
+        onSubmit={() => undefined}
+      />,
+    );
+    const card = container.querySelector(".modal-card")!;
+    fireEvent.mouseDown(card);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("does NOT call onClose for non-Escape keydowns in the input", () => {
+    const onClose = vi.fn();
+    render(
+      <TextPromptModal
+        prompt={{ title: "T", initial: "", onSubmit: () => undefined }}
+        value=""
+        onValueChange={() => undefined}
+        onClose={onClose}
+        onSubmit={() => undefined}
+      />,
+    );
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "a" });
+    expect(onClose).not.toHaveBeenCalled();
+  });
 });
 
 describe("ConfirmDialog", () => {
@@ -201,5 +232,18 @@ describe("ConfirmDialog", () => {
     const backdrop = container.querySelector(".modal-backdrop")!;
     fireEvent.mouseDown(backdrop, { target: backdrop, currentTarget: backdrop });
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it("does NOT call onClose when mousedown originates inside the card", () => {
+    const onClose = vi.fn();
+    const { container } = render(
+      <ConfirmDialog
+        dialog={{ title: "T", message: "M", onConfirm: () => undefined }}
+        onClose={onClose}
+      />,
+    );
+    const card = container.querySelector(".modal-card")!;
+    fireEvent.mouseDown(card);
+    expect(onClose).not.toHaveBeenCalled();
   });
 });

@@ -14,6 +14,7 @@ import {
   getTabTitle,
   hydrateTabs,
   isPaneDragControl,
+  isTauriRuntime,
   loadAppState,
   LEGACY_LAYOUT_KEY,
   LEGACY_STATE_V3_KEY,
@@ -22,6 +23,7 @@ import {
   resolveAddress,
   STORAGE_KEY,
   type AppState,
+  type ChatPane,
   type ChatTab,
 } from "./appCore";
 
@@ -124,6 +126,35 @@ describe("getOriginFallbackIcon", () => {
     // this as an error since the value is harmless when used as an <img src>.
     expect(getOriginFallbackIcon("")).toBe("null/favicon.ico");
   });
+
+  it("returns empty string when URL constructor throws (line 169 catch)", () => {
+    const OriginalURL = globalThis.URL;
+    // @ts-expect-error -- temporarily override
+    globalThis.URL = function FakeURL() {
+      throw new Error("forced parse failure");
+    } as unknown as typeof URL;
+    try {
+      expect(getOriginFallbackIcon("https://valid.com")).toBe("");
+    } finally {
+      globalThis.URL = OriginalURL;
+    }
+  });
+});
+
+describe("isTauriRuntime", () => {
+  it("returns false in jsdom (no __TAURI_INTERNALS__)", () => {
+    expect(isTauriRuntime()).toBe(false);
+  });
+
+  it("returns true when window has __TAURI_INTERNALS__", () => {
+    const w = window as unknown as Record<string, unknown>;
+    w.__TAURI_INTERNALS__ = {};
+    try {
+      expect(isTauriRuntime()).toBe(true);
+    } finally {
+      delete w.__TAURI_INTERNALS__;
+    }
+  });
 });
 
 describe("getFallbackTabTitle", () => {
@@ -138,6 +169,38 @@ describe("getFallbackTabTitle", () => {
     // so we use the canonical /newtab.html path here.
     expect(getFallbackTabTitle("/newtab.html")).toBe("New Tab");
     expect(getFallbackTabTitle("http://localhost:1420/newtab.html")).toBe("New Tab");
+  });
+
+  it("returns NEW_TAB_TITLE when hostname is empty after stripping www. (line 182 || branch)", () => {
+    const OriginalURL = globalThis.URL;
+    // Stub URL so isNewTabUrl returns false (path !== /newtab.html), but
+    // hostname.replace(/^www\./, "") returns "" -> the || NEW_TAB_TITLE branch fires.
+    // @ts-expect-error -- temporarily override for test
+    globalThis.URL = function FakeURL() {
+      return { pathname: "/somewhere", hostname: "www." };
+    };
+    try {
+      expect(getFallbackTabTitle("https://www.")).toBe("New Tab");
+    } finally {
+      globalThis.URL = OriginalURL;
+    }
+  });
+
+  it("falls back to NEW_TAB_TITLE when URL parsing throws", () => {
+    const OriginalURL = globalThis.URL;
+    let callCount = 0;
+    // @ts-expect-error -- temporarily override
+    globalThis.URL = function FakeURL() {
+      callCount += 1;
+      // first call is from isNewTabUrl (returns false fallback), second is the title parse
+      if (callCount >= 2) throw new Error("forced parse failure");
+      return { pathname: "/somewhere" };
+    };
+    try {
+      expect(getFallbackTabTitle("https://something")).toBe("New Tab");
+    } finally {
+      globalThis.URL = OriginalURL;
+    }
   });
 });
 
@@ -168,6 +231,12 @@ describe("getDisplayUrl", () => {
         }),
       ),
     ).toBe("");
+  });
+
+  it("falls back to loadedUrl when currentUrl and url are empty (line 174 third branch)", () => {
+    expect(
+      getDisplayUrl(baseTab({ currentUrl: "", url: "", loadedUrl: "https://only-loaded.example" })),
+    ).toBe("https://only-loaded.example");
   });
 });
 
@@ -435,6 +504,14 @@ describe("loadAppState", () => {
     expect(window.localStorage.getItem(LEGACY_LAYOUT_KEY)).toBeNull();
   });
 
+  it("returns default state when LEGACY_LAYOUT_KEY contains invalid JSON (catch path)", () => {
+    window.localStorage.setItem(LEGACY_LAYOUT_KEY, "{not valid json");
+    const state = loadAppState();
+    // migrateLegacyLayout returns null → loadAppState falls through to defaults.
+    expect(state.workspaces.length).toBeGreaterThan(0);
+    expect(state.profiles[0].id).toBe(DEFAULT_PROFILE_ID);
+  });
+
   it("migrates v3 (multiple workspaces, no profiles) to v5", () => {
     const v3 = {
       workspaces: [
@@ -514,5 +591,382 @@ describe("loadAppState", () => {
 
     // v4 key should be removed after migration.
     expect(window.localStorage.getItem(LEGACY_STATE_V4_KEY)).toBeNull();
+  });
+
+  it("falls back to a default state when LEGACY_STATE_V3 contains malformed JSON", () => {
+    window.localStorage.setItem(LEGACY_STATE_V3_KEY, "{not valid json");
+    const state = loadAppState();
+    // Migration returns null for malformed JSON; loadAppState falls back to a fresh state
+    expect(state.workspaces.length).toBeGreaterThan(0);
+    expect(state.profiles[0].id).toBe(DEFAULT_PROFILE_ID);
+  });
+
+  it("falls back to a default state when LEGACY_STATE_V4 contains malformed JSON", () => {
+    window.localStorage.setItem(LEGACY_STATE_V4_KEY, "{not valid json");
+    const state = loadAppState();
+    expect(state.workspaces.length).toBeGreaterThan(0);
+    expect(state.profiles[0].id).toBe(DEFAULT_PROFILE_ID);
+  });
+
+  it("v4 migration uses first workspace id when activeWorkspaceId is missing (line 315)", () => {
+    const v4 = {
+      workspaces: [
+        {
+          id: "first-ws",
+          name: "First",
+          columns: 1,
+          panes: [
+            {
+              id: "p",
+              title: "p",
+              profileId: "prof-default",
+              activeTabId: "t",
+              tabs: [{ id: "t", title: "x", url: "https://x", loadedUrl: "https://x" }],
+            },
+          ],
+        },
+      ],
+      // activeWorkspaceId omitted entirely → first workspace becomes active.
+      profiles: [{ id: "prof-default", name: "Default", presetId: "claude" }],
+    };
+    window.localStorage.setItem(LEGACY_STATE_V4_KEY, JSON.stringify(v4));
+    const state = loadAppState();
+    expect(state.activeWorkspaceId).toBe("first-ws");
+  });
+
+  it("v4 migration falls back to DEFAULT_PROFILE_ID when pane.profileId is missing (line 309 falsy)", () => {
+    const v4 = {
+      workspaces: [
+        {
+          id: "ws",
+          name: "X",
+          columns: 1,
+          panes: [
+            {
+              id: "p",
+              title: "p",
+              // profileId intentionally missing → falsy branch on line 307.
+              activeTabId: "t",
+              tabs: [{ id: "t", title: "x", url: "https://x", loadedUrl: "https://x" }],
+            },
+          ],
+        },
+      ],
+      activeWorkspaceId: "ws",
+      profiles: [{ id: "prof-old", name: "Default", presetId: "claude" }],
+    };
+    window.localStorage.setItem(LEGACY_STATE_V4_KEY, JSON.stringify(v4));
+    const state = loadAppState();
+    expect(state.workspaces[0].panes[0].profileId).toBe(DEFAULT_PROFILE_ID);
+  });
+
+  it("v4 migration falls back to DEFAULT when pane.profileId is unknown (line 308 nullish)", () => {
+    const v4 = {
+      workspaces: [
+        {
+          id: "ws",
+          name: "X",
+          columns: 1,
+          panes: [
+            {
+              id: "p",
+              title: "p",
+              profileId: "ghost-id-not-in-profiles",
+              activeTabId: "t",
+              tabs: [{ id: "t", title: "x", url: "https://x", loadedUrl: "https://x" }],
+            },
+          ],
+        },
+      ],
+      activeWorkspaceId: "ws",
+      profiles: [{ id: "prof-old", name: "Default", presetId: "claude" }],
+    };
+    window.localStorage.setItem(LEGACY_STATE_V4_KEY, JSON.stringify(v4));
+    const state = loadAppState();
+    // pane.profileId is truthy but not in oldIdToNewId map → ?? falls through to DEFAULT.
+    expect(state.workspaces[0].panes[0].profileId).toBe(DEFAULT_PROFILE_ID);
+  });
+
+  it("v4 migration with NO profiles array maps panes to DEFAULT_PROFILE_ID (line 310 falsy)", () => {
+    // Pane has no profileId at all → falls into the right-hand branch of the ?: at line 310.
+    const v4 = {
+      workspaces: [
+        {
+          id: "ws",
+          name: "X",
+          columns: 1,
+          panes: [
+            {
+              id: "p",
+              title: "p",
+              activeTabId: "t",
+              tabs: [{ id: "t", title: "x", url: "https://x", loadedUrl: "https://x" }],
+            },
+          ],
+        },
+      ],
+      activeWorkspaceId: "ws",
+      // profiles intentionally omitted (undefined) so (parsed.profiles ?? []) hits its right side.
+    };
+    window.localStorage.setItem(LEGACY_STATE_V4_KEY, JSON.stringify(v4));
+    const state = loadAppState();
+    expect(state.workspaces[0].panes[0].profileId).toBe(DEFAULT_PROFILE_ID);
+    expect(state.profiles.find((p) => p.id === DEFAULT_PROFILE_ID)).toBeDefined();
+  });
+
+  it("v4 migration: empty workspaces array returns null and falls through (line 284 false)", () => {
+    const v4 = { workspaces: [], activeWorkspaceId: "ignored", profiles: [] };
+    window.localStorage.setItem(LEGACY_STATE_V4_KEY, JSON.stringify(v4));
+    const state = loadAppState();
+    // V4 returned null → loadAppState falls back to default state.
+    expect(state.workspaces.length).toBeGreaterThan(0);
+    expect(state.profiles[0].id).toBe(DEFAULT_PROFILE_ID);
+  });
+
+  it("v4 migration: profile with whitespace-only name maps to 'Default'", () => {
+    const v4 = {
+      workspaces: [
+        {
+          id: "ws",
+          name: "X",
+          columns: 1,
+          panes: [
+            {
+              id: "p",
+              title: "p",
+              profileId: "old-blank",
+              activeTabId: "t",
+              tabs: [{ id: "t", title: "x", url: "https://x", loadedUrl: "https://x" }],
+            },
+          ],
+        },
+      ],
+      activeWorkspaceId: "ws",
+      // Whitespace name should fall back to "Default" (covers `(p.name ?? "Default").trim() || "Default"`).
+      profiles: [{ id: "old-blank", name: "   ", presetId: "claude" }],
+    };
+    window.localStorage.setItem(LEGACY_STATE_V4_KEY, JSON.stringify(v4));
+    const state = loadAppState();
+    expect(state.workspaces[0].panes[0].profileId).toBe(DEFAULT_PROFILE_ID);
+  });
+
+  it("v3 migration: empty workspaces array returns null and falls through (line 250 false)", () => {
+    const v3 = { workspaces: [], activeWorkspaceId: "ignored" };
+    window.localStorage.setItem(LEGACY_STATE_V3_KEY, JSON.stringify(v3));
+    const state = loadAppState();
+    expect(state.workspaces.length).toBeGreaterThan(0);
+    expect(state.profiles[0].id).toBe(DEFAULT_PROFILE_ID);
+  });
+
+  it("v3 migration uses first workspace id when activeWorkspaceId is missing (line 262 false)", () => {
+    const v3 = {
+      workspaces: [
+        {
+          id: "ws-only",
+          name: "Only",
+          columns: 1,
+          panes: [
+            {
+              id: "p",
+              title: "p",
+              activeTabId: "t",
+              tabs: [{ id: "t", title: "x", url: "https://x", loadedUrl: "https://x" }],
+            },
+          ],
+        },
+      ],
+      // activeWorkspaceId omitted entirely.
+    };
+    window.localStorage.setItem(LEGACY_STATE_V3_KEY, JSON.stringify(v3));
+    const state = loadAppState();
+    expect(state.activeWorkspaceId).toBe("ws-only");
+  });
+
+  it("v3 migration handles panes whose tabs field is missing (line 257 fallback)", () => {
+    const v3 = {
+      workspaces: [
+        {
+          id: "ws",
+          name: "X",
+          columns: 1,
+          panes: [
+            {
+              id: "p",
+              title: "p",
+              activeTabId: "t",
+              // tabs missing → hydrateTabs(pane.tabs ?? []) hits the right side.
+            },
+          ],
+        },
+      ],
+      activeWorkspaceId: "ws",
+    };
+    window.localStorage.setItem(LEGACY_STATE_V3_KEY, JSON.stringify(v3));
+    const state = loadAppState();
+    expect(state.workspaces[0].panes[0].tabs).toEqual([]);
+  });
+
+  it("legacy layout migration: empty panes array returns null (line 224 false)", () => {
+    const legacy = { columns: 1, panes: [] };
+    window.localStorage.setItem(LEGACY_LAYOUT_KEY, JSON.stringify(legacy));
+    const state = loadAppState();
+    expect(state.workspaces.length).toBeGreaterThan(0);
+    expect(state.profiles[0].id).toBe(DEFAULT_PROFILE_ID);
+  });
+
+  it("legacy layout migration uses default columns=1 when columns is missing (line 229)", () => {
+    const legacy = {
+      // columns omitted → parsed.columns ?? 1 hits the right side.
+      panes: [
+        {
+          id: "p",
+          title: "p",
+          activeTabId: "t",
+          tabs: [{ id: "t", title: "x", url: "https://x", loadedUrl: "https://x" }],
+        },
+      ],
+    };
+    window.localStorage.setItem(LEGACY_LAYOUT_KEY, JSON.stringify(legacy));
+    const state = loadAppState();
+    expect(state.workspaces[0].columns).toBe(1);
+  });
+
+  it("legacy layout migration handles pane with missing tabs (line 233 fallback)", () => {
+    const legacy = {
+      columns: 1,
+      panes: [
+        {
+          id: "p",
+          title: "p",
+          activeTabId: "t",
+          // tabs omitted.
+        },
+      ],
+    };
+    window.localStorage.setItem(LEGACY_LAYOUT_KEY, JSON.stringify(legacy));
+    const state = loadAppState();
+    expect(state.workspaces[0].panes[0].tabs).toEqual([]);
+  });
+
+  it("loadAppState uses createDefaultProfiles when STORAGE_KEY has no profiles array (lines 331-333)", () => {
+    // STORAGE_KEY is the current ai-chat-multiplexer-state key. Use a saved state
+    // with workspaces but NO profiles field at all.
+    const stateNoProfiles = {
+      workspaces: [
+        {
+          id: "ws",
+          name: "X",
+          columns: 1,
+          panes: [
+            {
+              id: "p",
+              title: "p",
+              profileId: "unknown-prof",
+              activeTabId: "t",
+              tabs: [{ id: "t", title: "x", url: "https://x", loadedUrl: "https://x" }],
+            },
+          ],
+        },
+      ],
+      activeWorkspaceId: "ws",
+      // profiles intentionally omitted → falls into createDefaultProfiles().
+    };
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(stateNoProfiles));
+    const state = loadAppState();
+    expect(state.profiles[0].id).toBe(DEFAULT_PROFILE_ID);
+    // pane.profileId "unknown-prof" not in default profile ids → reset to DEFAULT.
+    expect(state.workspaces[0].panes[0].profileId).toBe(DEFAULT_PROFILE_ID);
+  });
+
+  it("loadAppState handles pane with missing tabs in current STORAGE_KEY (line 333 fallback)", () => {
+    const saved = {
+      workspaces: [
+        {
+          id: "ws",
+          name: "X",
+          columns: 1,
+          panes: [
+            {
+              id: "p",
+              title: "p",
+              profileId: DEFAULT_PROFILE_ID,
+              activeTabId: "t",
+              // tabs missing
+            },
+          ],
+        },
+      ],
+      activeWorkspaceId: "ws",
+      profiles: [{ id: DEFAULT_PROFILE_ID, name: "Default" }],
+    };
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
+    const state = loadAppState();
+    expect(state.workspaces[0].panes[0].tabs).toEqual([]);
+  });
+
+  it("v4 migration: profile with name=undefined falls back to 'Default' (line 292 ?? right side)", () => {
+    const v4 = {
+      workspaces: [
+        {
+          id: "ws",
+          name: "X",
+          columns: 1,
+          panes: [
+            {
+              id: "p",
+              title: "p",
+              profileId: "old-undef",
+              activeTabId: "t",
+              tabs: [{ id: "t", title: "x", url: "https://x", loadedUrl: "https://x" }],
+            },
+          ],
+        },
+      ],
+      activeWorkspaceId: "ws",
+      // p.name is undefined here → `(p.name ?? "Default").trim()` exercises the right side of ??.
+      profiles: [{ id: "old-undef", presetId: "claude" } as { id: string; name: string }],
+    };
+    window.localStorage.setItem(LEGACY_STATE_V4_KEY, JSON.stringify(v4));
+    const state = loadAppState();
+    expect(state.workspaces[0].panes[0].profileId).toBe(DEFAULT_PROFILE_ID);
+  });
+
+  it("v4 migration: pane with missing tabs uses [] fallback (line 310 ?? right side)", () => {
+    const v4 = {
+      workspaces: [
+        {
+          id: "ws",
+          name: "X",
+          columns: 1,
+          panes: [
+            {
+              id: "p",
+              title: "p",
+              profileId: "old1",
+              activeTabId: "t",
+              // tabs intentionally omitted (undefined) → `pane.tabs ?? []` right-side branch.
+            } as unknown as ChatPane,
+          ],
+        },
+      ],
+      activeWorkspaceId: "ws",
+      profiles: [{ id: "old1", name: "Default" }],
+    };
+    window.localStorage.setItem(LEGACY_STATE_V4_KEY, JSON.stringify(v4));
+    const state = loadAppState();
+    expect(state.workspaces[0].panes[0].tabs).toEqual([]);
+  });
+
+  it("loadAppState falls through when STORAGE_KEY workspaces is NOT an array (line 331 false branch)", () => {
+    const saved = {
+      workspaces: "not-an-array",
+      activeWorkspaceId: "ws",
+      profiles: [{ id: DEFAULT_PROFILE_ID, name: "Default" }],
+    };
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
+    const state = loadAppState();
+    // Falls through to legacy/default initialisation — workspaces still produced.
+    expect(Array.isArray(state.workspaces)).toBe(true);
+    expect(state.workspaces.length).toBeGreaterThan(0);
   });
 });

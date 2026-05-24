@@ -1,16 +1,20 @@
-import { describe, expect, it, vi, afterEach } from "vitest";
+import { describe, expect, it, vi, afterEach, beforeEach } from "vitest";
 import { fireEvent, render, screen, cleanup } from "@testing-library/react";
 
+let tauriRuntime = false;
 vi.mock("./appCore", async () => {
   const actual = await vi.importActual<typeof import("./appCore")>("./appCore");
   return {
     ...actual,
-    isTauriRuntime: () => false,
+    isTauriRuntime: () => tauriRuntime,
   };
 });
 
 import { SettingsModal, type SettingsModalProps } from "./components/SettingsModal";
 
+beforeEach(() => {
+  tauriRuntime = false;
+});
 afterEach(cleanup);
 
 function defaultProps(overrides: Partial<SettingsModalProps> = {}): SettingsModalProps {
@@ -72,6 +76,52 @@ describe("SettingsModal", () => {
     render(<SettingsModal {...props} />);
     fireEvent.click(screen.getByRole("button", { name: /Tối/ }));
     expect(props.onThemeChange).toHaveBeenCalledWith("dark");
+  });
+
+  it("calls onThemeChange('light') when Sáng button is clicked", () => {
+    const props = defaultProps({ theme: "dark" });
+    render(<SettingsModal {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: /Sáng/ }));
+    expect(props.onThemeChange).toHaveBeenCalledWith("light");
+  });
+
+  it("does NOT call onClose when mousedown originates inside the settings card", () => {
+    const props = defaultProps();
+    const { container } = render(<SettingsModal {...props} />);
+    const card = container.querySelector(".modal-card.settings-card")!;
+    fireEvent.mouseDown(card);
+    expect(props.onClose).not.toHaveBeenCalled();
+  });
+
+  it("disables the full-backup buttons in non-Tauri runtime", () => {
+    const props = defaultProps();
+    render(<SettingsModal {...props} />);
+    const exportBtn = screen.getByRole("button", { name: /Full backup/ }) as HTMLButtonElement;
+    const restoreBtn = screen.getByRole("button", { name: /Khôi phục từ backup/ }) as HTMLButtonElement;
+    expect(exportBtn.disabled).toBe(true);
+    expect(restoreBtn.disabled).toBe(true);
+    expect(exportBtn.title).toBe("Chỉ chạy trong app desktop");
+    expect(restoreBtn.title).toBe("Chỉ chạy trong app desktop");
+  });
+
+  it("enables full-backup buttons and omits hint title in Tauri runtime", () => {
+    tauriRuntime = true;
+    const props = defaultProps();
+    render(<SettingsModal {...props} />);
+    const exportBtn = screen.getByRole("button", { name: /Full backup/ }) as HTMLButtonElement;
+    const restoreBtn = screen.getByRole("button", { name: /Khôi phục từ backup/ }) as HTMLButtonElement;
+    expect(exportBtn.disabled).toBe(false);
+    expect(restoreBtn.disabled).toBe(false);
+    // The undefined-title branch (lines 168 + 177) renders no title attribute.
+    expect(exportBtn.hasAttribute("title")).toBe(false);
+    expect(restoreBtn.hasAttribute("title")).toBe(false);
+  });
+
+  it("disables config buttons while backupBusy != 'idle'", () => {
+    const props = defaultProps({ backupBusy: "exporting" });
+    render(<SettingsModal {...props} />);
+    expect((screen.getByRole("button", { name: /Xuất cấu hình/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: /Nhập cấu hình/ }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("shows 'Kiểm tra cập nhật' button when status is idle and triggers callback", () => {

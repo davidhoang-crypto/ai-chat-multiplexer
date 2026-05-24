@@ -5,8 +5,15 @@ import type { MutableRefObject } from "react";
 
 // Mock Pane to avoid pulling in its deep dependency tree (Tauri webview, drag handlers, etc.)
 vi.mock("./components/Pane", () => ({
-  Pane: (props: { pane: { id: string; title: string }; index: number }) => (
+  Pane: (props: {
+    pane: { id: string; title: string };
+    index: number;
+    registerShellRef?: (paneId: string, element: HTMLDivElement | null) => void;
+  }) => (
     <div data-testid="pane" data-id={props.pane.id} data-index={props.index}>
+      <div
+        ref={(element) => props.registerShellRef?.(props.pane.id, element)}
+      />
       {props.pane.title}
     </div>
   ),
@@ -144,5 +151,57 @@ describe("PaneGrid", () => {
       (el) => el.getAttribute("data-id"),
     );
     expect(ids).toEqual(["p1"]);
+  });
+
+  it("registers shell refs for each pane in webviewShells.current", () => {
+    let capturedRef: MutableRefObject<Record<string, HTMLDivElement | null>> | null = null;
+    function CapturingHarness() {
+      const paneDrag = useRef(null) as MutableRefObject<PaneGridProps["paneDrag"]["current"]>;
+      const tabDrag = useRef(null) as MutableRefObject<PaneGridProps["tabDrag"]["current"]>;
+      const webviewShells = useRef<Record<string, HTMLDivElement | null>>(
+        {},
+      ) as MutableRefObject<Record<string, HTMLDivElement | null>>;
+      capturedRef = webviewShells;
+      const panes = [makePane("p1"), makePane("p2")];
+      const props: PaneGridProps = {
+        visiblePanes: panes,
+        activePanes: panes,
+        effectiveColumns: 2,
+        focusedPaneId: null,
+        dragOverPaneId: null,
+        draggingTabKey: null,
+        tabDragOver: null,
+        editingUrls: {},
+        paneDrag,
+        tabDrag,
+        webviewShells,
+        getProfileById: () => ({ id: "prof-default", name: "Default" }),
+        setFocusedPaneId: vi.fn(),
+        setDraggingPaneId: vi.fn(),
+        setDragOverPaneId: vi.fn(),
+        setDraggingTabKey: vi.fn(),
+        setTabDragOver: vi.fn(),
+        setEditingUrls: vi.fn(),
+        addTab: vi.fn(),
+        removeTab: vi.fn(),
+        removePane: vi.fn(),
+        updateActivePane: vi.fn(),
+        navigateActiveWebview: vi.fn(),
+        startEditingUrl: vi.fn(),
+        updateEditingUrl: vi.fn(),
+        commitTabUrl: vi.fn(),
+        finishPaneDrag: vi.fn(),
+        moveTabWithinPane: vi.fn(),
+        moveTabAcrossPanes: vi.fn(),
+        detachTabToNewPane: vi.fn(),
+      };
+      return <PaneGrid {...props} />;
+    }
+    render(<CapturingHarness />);
+    expect(capturedRef).not.toBeNull();
+    const refs = capturedRef!.current;
+    expect(Object.keys(refs).sort()).toEqual(["p1", "p2"]);
+    expect(refs.p1).not.toBeNull();
+    expect(refs.p2).not.toBeNull();
   });
 });

@@ -39,3 +39,8 @@ src-tauri/Cargo.lock
 *.swp
 .claude/
 .codeboarding/
+
+coverage/
+
+brda.txt
+coverage-text.txt

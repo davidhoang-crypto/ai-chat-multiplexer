@@ -55,6 +55,15 @@ describe("WorkspaceSwitcher", () => {
     expect(screen.getByText(/· 3 panes$/)).toBeDefined();
   });
 
+  it("propagates open state via onOpenChange when details toggles", () => {
+    const props = defaultProps({ open: false });
+    const { container } = render(<WorkspaceSwitcher {...props} />);
+    const details = container.querySelector("details") as HTMLDetailsElement;
+    details.open = true;
+    details.dispatchEvent(new Event("toggle"));
+    expect(props.onOpenChange).toHaveBeenCalledWith(true);
+  });
+
   it("lists all workspaces in the menu", () => {
     render(<WorkspaceSwitcher {...defaultProps()} />);
     const menu = screen.getByRole("menu");

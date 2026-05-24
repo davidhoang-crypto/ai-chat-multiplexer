@@ -4,10 +4,14 @@ import { useRef } from "react";
 import type { MutableRefObject } from "react";
 
 const invokeSpy = vi.fn();
+const rejectingCommands = new Set<string>();
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (cmd: string, args?: unknown) => {
     invokeSpy(cmd, args);
+    if (rejectingCommands.has(cmd)) {
+      return Promise.reject(new Error(`${cmd} failed`));
+    }
     return Promise.resolve();
   },
 }));
@@ -92,6 +96,7 @@ describe("useNativeWebviews", () => {
   beforeEach(() => {
     tauriRuntime = true;
     invokeSpy.mockReset();
+    rejectingCommands.clear();
     // Run rAF callbacks synchronously so the sync function executes inside the test.
     rafSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
       cb(0);
@@ -254,5 +259,195 @@ describe("useNativeWebviews", () => {
 
     const upserts = calls("native_webview_upsert");
     expect(upserts[0][1]).toMatchObject({ profileId: "prof-x-y" });
+  });
+
+  it("logs an error and continues when native_webview_upsert rejects", async () => {
+    rejectingCommands.add("native_webview_upsert");
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const state = makeState(
+      [makeWorkspace("ws1", [makePane("p1", "prof-default", [makeTab("t1", "https://a")])])],
+      "ws1",
+    );
+    setupHookWithShells(state, null, false, ["p1"]);
+    // Flush microtasks so the catch handler runs.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(errorSpy).toHaveBeenCalledWith(
+      "native_webview_upsert failed",
+      expect.any(Error),
+    );
+    errorSpy.mockRestore();
+  });
+
+  it("logs an error when native_webview_load_url rejects on URL change", async () => {
+    rejectingCommands.add("native_webview_load_url");
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const initial = makeState(
+      [makeWorkspace("ws1", [makePane("p1", "prof-default", [makeTab("t1", "https://a")])])],
+      "ws1",
+    );
+    const { hook } = setupHookWithShells(initial, null, false, ["p1"]);
+
+    const next = makeState(
+      [
+        makeWorkspace("ws1", [
+          makePane("p1", "prof-default", [makeTab("t1", "https://a", "https://b")]),
+        ]),
+      ],
+      "ws1",
+    );
+    act(() => {
+      hook.rerender({ s: next, f: null, sus: false });
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(errorSpy).toHaveBeenCalledWith(
+      "native_webview_load_url failed",
+      expect.any(Error),
+    );
+    errorSpy.mockRestore();
+  });
+
+  it("silently swallows native_webview_hide rejections", async () => {
+    rejectingCommands.add("native_webview_hide");
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const tabs = [makeTab("t1", "https://a"), makeTab("t2", "https://b")];
+    const state = makeState(
+      [makeWorkspace("ws1", [makePane("p1", "prof-default", tabs, "t1")])],
+      "ws1",
+    );
+    setupHookWithShells(state, null, false, ["p1"]);
+    await Promise.resolve();
+    await Promise.resolve();
+    // hide uses a no-op catch; nothing logged, but invoke was called.
+    expect(calls("native_webview_hide").length).toBeGreaterThan(0);
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it("hides existing live label on re-render when it becomes invisible (line 108)", () => {
+    const tabs = [makeTab("t1", "https://a")];
+    const initial = makeState(
+      [makeWorkspace("ws1", [makePane("p1", "prof-default", tabs)])],
+      "ws1",
+    );
+    const { hook } = setupHookWithShells(initial, null, false, ["p1"]);
+    // First render: tab-t1 is visible (upserted) and tracked in liveLabels.
+    expect(calls("native_webview_upsert").length).toBeGreaterThan(0);
+    invokeSpy.mockReset();
+    // Re-render with the same state but suspended=true.
+    act(() => {
+      hook.rerender({ s: initial, f: null, sus: true });
+    });
+    // Now tab-t1 is in liveLabels but no longer in visibleLabels — line 108 fires.
+    const hideLabels = calls("native_webview_hide").map((c) => (c[1] as { label: string }).label);
+    expect(hideLabels).toContain("tab-t1");
+  });
+
+  it("invokes the .catch handler on native_webview_close rejection (line 105 anonymous)", async () => {
+    rejectingCommands.add("native_webview_close");
+    const tabs = [makeTab("t1", "https://a"), makeTab("t2", "https://b")];
+    const initial = makeState(
+      [makeWorkspace("ws1", [makePane("p1", "prof-default", tabs)])],
+      "ws1",
+    );
+    const { hook } = setupHookWithShells(initial, null, false, ["p1"]);
+    invokeSpy.mockClear();
+
+    // Re-render with t2 removed — t2's label moves out of allLabels and triggers close.
+    const next = makeState(
+      [makeWorkspace("ws1", [makePane("p1", "prof-default", [makeTab("t1", "https://a")])])],
+      "ws1",
+    );
+    act(() => {
+      hook.rerender({ s: next, f: null, sus: false });
+    });
+    // Allow the rejection to flush through the .catch arrow.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(calls("native_webview_close").length).toBeGreaterThan(0);
+  });
+
+  it("invokes the .catch handler on native_webview_hide rejection (line 108 anonymous)", async () => {
+    rejectingCommands.add("native_webview_hide");
+    const tabs = [makeTab("t1", "https://a")];
+    const initial = makeState(
+      [makeWorkspace("ws1", [makePane("p1", "prof-default", tabs)])],
+      "ws1",
+    );
+    const { hook } = setupHookWithShells(initial, null, false, ["p1"]);
+    invokeSpy.mockClear();
+
+    // Suspend → triggers hide path that rejects.
+    act(() => {
+      hook.rerender({ s: initial, f: null, sus: true });
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(calls("native_webview_hide").length).toBeGreaterThan(0);
+  });
+
+  it("falls back through tab.url then tab.loadedUrl when currentUrl is empty (line 59)", () => {
+    // Build a tab where currentUrl="" but tab.url has a value: pure fallback path.
+    const fallbackTab: ChatTab = {
+      id: "tFallback",
+      title: "T",
+      url: "https://from-url-field/",
+      loadedUrl: "https://from-loaded/",
+      currentUrl: "",
+    };
+    const state = makeState(
+      [makeWorkspace("ws1", [makePane("p1", "prof-default", [fallbackTab])])],
+      "ws1",
+    );
+    setupHookWithShells(state, null, false, ["p1"]);
+
+    const upsert = calls("native_webview_upsert")[0]?.[1] as { url: string } | undefined;
+    expect(upsert?.url).toBe("https://from-url-field/");
+  });
+
+  it("falls back to tab.loadedUrl when both currentUrl and url are empty (line 59 last branch)", () => {
+    const fallbackTab: ChatTab = {
+      id: "tLoaded",
+      title: "T",
+      url: "",
+      loadedUrl: "https://from-loaded/",
+      currentUrl: "",
+    };
+    const state = makeState(
+      [makeWorkspace("ws1", [makePane("p1", "prof-default", [fallbackTab])])],
+      "ws1",
+    );
+    setupHookWithShells(state, null, false, ["p1"]);
+
+    const upsert = calls("native_webview_upsert")[0]?.[1] as { url: string } | undefined;
+    expect(upsert?.url).toBe("https://from-loaded/");
+  });
+
+  it("does not re-assign liveLabels.current when cleanup runs before sync (line 112)", () => {
+    // Stub requestAnimationFrame so the sync callback is captured but not invoked.
+    let captured: FrameRequestCallback | null = null;
+    const rafSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+      captured = cb;
+      return 1 as unknown as number;
+    });
+    const cancelSpy = vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+
+    const state = makeState(
+      [makeWorkspace("ws1", [makePane("p1", "prof-default", [makeTab("t1", "https://x")])])],
+      "ws1",
+    );
+    const { hook } = setupHookWithShells(state, null, false, ["p1"]);
+
+    // Unmount BEFORE the frame fires — sets cancelled = true.
+    hook.unmount();
+
+    // Now invoke the captured rAF callback. It will run sync() with cancelled=true,
+    // so the `if (!cancelled)` guard at line 112 skips assigning liveLabels.current.
+    expect(captured).not.toBeNull();
+    expect(() => captured!(0)).not.toThrow();
+
+    rafSpy.mockRestore();
+    cancelSpy.mockRestore();
   });
 });

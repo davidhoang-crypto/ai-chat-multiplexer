@@ -8,11 +8,12 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (cmd: string, args?: unknown) => invokeSpy(cmd, args),
 }));
 
+let tauriRuntime = false;
 vi.mock("./appCore", async () => {
   const actual = await vi.importActual<typeof import("./appCore")>("./appCore");
   return {
     ...actual,
-    isTauriRuntime: () => false,
+    isTauriRuntime: () => tauriRuntime,
   };
 });
 
@@ -112,6 +113,7 @@ function setupHook(initial: AppState) {
 describe("useProfileWorkspaceActions", () => {
   beforeEach(() => {
     invokeSpy.mockReset();
+    tauriRuntime = false;
   });
 
   it("addBlankPaneWithProfile appends a blank pane bound to the profile", () => {
@@ -220,6 +222,48 @@ describe("useProfileWorkspaceActions", () => {
     expect(h.state.profiles[0].name).toBe("X");
   });
 
+  it("renameProfile is a no-op when profile id does not exist", () => {
+    const profiles = [{ id: "prof-default", name: "Default" }];
+    const initial = makeState([makeWorkspace("ws1", [])], "ws1", profiles);
+    const h = setupHook(initial);
+    act(() => h.actions.renameProfile("missing-id"));
+    expect(h.openTextPrompt).not.toHaveBeenCalled();
+  });
+
+  it("renameProfile renaming a profile to 'Default' strips the suffix from pane titles", () => {
+    const profiles = [{ id: "prof-x", name: "X" }];
+    const pane: ChatPane = { ...makePane("p1", "prof-x"), title: "P1 — X" };
+    const initial = makeState([makeWorkspace("ws1", [pane])], "ws1", profiles);
+    const h = setupHook(initial);
+
+    act(() => h.actions.renameProfile("prof-x"));
+    act(() => h.capturedPrompt!.onSubmit("Default"));
+
+    expect(h.state.profiles[0].name).toBe("Default");
+    // The base title (everything before " — ") should be retained without suffix.
+    expect(h.state.workspaces[0].panes[0].title).toBe("P1");
+  });
+
+  it("renameProfile leaves panes bound to other profiles unchanged (line 103 early-return)", () => {
+    const profiles = [
+      { id: "prof-x", name: "X" },
+      { id: "prof-y", name: "Y" },
+    ];
+    const paneX: ChatPane = { ...makePane("p1", "prof-x"), title: "P1 — X" };
+    const paneY: ChatPane = { ...makePane("p2", "prof-y"), title: "P2 — Y" };
+    const initial = makeState(
+      [makeWorkspace("ws1", [paneX, paneY])],
+      "ws1",
+      profiles,
+    );
+    const h = setupHook(initial);
+    act(() => h.actions.renameProfile("prof-x"));
+    act(() => h.capturedPrompt!.onSubmit("Renamed"));
+    expect(h.state.workspaces[0].panes[0].title).toBe("P1 — Renamed");
+    // The pane bound to prof-y should be untouched (early-return branch).
+    expect(h.state.workspaces[0].panes[1].title).toBe("P2 — Y");
+  });
+
   it("deleteProfile shows in-use dialog when profile is bound to a pane", () => {
     const profiles = [{ id: "prof-x", name: "X" }];
     const initial = makeState(
@@ -232,6 +276,21 @@ describe("useProfileWorkspaceActions", () => {
     act(() => h.actions.deleteProfile("prof-x"));
 
     expect(h.capturedConfirm?.title).toBe("Profile đang được dùng");
+    expect(h.state.profiles).toHaveLength(1);
+  });
+
+  it("in-use dialog onConfirm is a no-op", () => {
+    const profiles = [{ id: "prof-x", name: "X" }];
+    const initial = makeState(
+      [makeWorkspace("ws1", [makePane("p1", "prof-x")])],
+      "ws1",
+      profiles,
+    );
+    const h = setupHook(initial);
+    act(() => h.actions.deleteProfile("prof-x"));
+    expect(h.capturedConfirm).not.toBeNull();
+    // Invoking the OK confirm handler must not throw or remove the profile.
+    act(() => h.capturedConfirm!.onConfirm());
     expect(h.state.profiles).toHaveLength(1);
   });
 
@@ -249,6 +308,56 @@ describe("useProfileWorkspaceActions", () => {
     act(() => h.capturedConfirm!.onConfirm());
 
     expect(h.state.profiles.map((p) => p.id)).toEqual(["prof-default"]);
+  });
+
+  it("deleteProfile is a no-op when profile id does not exist", () => {
+    const profiles = [{ id: "prof-default", name: "Default" }];
+    const initial = makeState([makeWorkspace("ws1", [])], "ws1", profiles);
+    const h = setupHook(initial);
+    act(() => h.actions.deleteProfile("missing-id"));
+    expect(h.capturedConfirm).toBeNull();
+    expect(h.state.profiles).toEqual(profiles);
+  });
+
+  it("deleteProfile invokes delete_profile_session in Tauri runtime", () => {
+    tauriRuntime = true;
+    invokeSpy.mockResolvedValue(undefined);
+    const profiles = [
+      { id: "prof-default", name: "Default" },
+      { id: "prof@special", name: "Special" },
+    ];
+    const initial = makeState([makeWorkspace("ws1", [])], "ws1", profiles);
+    const h = setupHook(initial);
+    act(() => h.actions.deleteProfile("prof@special"));
+    act(() => h.capturedConfirm!.onConfirm());
+    expect(invokeSpy).toHaveBeenCalledWith("delete_profile_session", {
+      profileId: "prof-special",
+    });
+    expect(h.state.profiles.map((p) => p.id)).toEqual(["prof-default"]);
+  });
+
+  it("logs and continues when delete_profile_session rejects in Tauri runtime", async () => {
+    tauriRuntime = true;
+    invokeSpy.mockRejectedValueOnce(new Error("native delete failed"));
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const profiles = [
+      { id: "prof-default", name: "Default" },
+      { id: "prof-x", name: "X" },
+    ];
+    const initial = makeState([makeWorkspace("ws1", [])], "ws1", profiles);
+    const h = setupHook(initial);
+    act(() => h.actions.deleteProfile("prof-x"));
+    act(() => h.capturedConfirm!.onConfirm());
+    // Profile is still removed from state synchronously even if invoke rejects.
+    expect(h.state.profiles.map((p) => p.id)).toEqual(["prof-default"]);
+    // Allow microtasks so the catch handler runs.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(errorSpy).toHaveBeenCalledWith(
+      "delete_profile_session failed",
+      expect.any(Error),
+    );
+    errorSpy.mockRestore();
   });
 
   it("switchWorkspace changes activeWorkspaceId and clears focus", () => {
@@ -305,6 +414,17 @@ describe("useProfileWorkspaceActions", () => {
     act(() => h.capturedPrompt!.onSubmit("Renamed"));
 
     expect(h.state.workspaces[0].name).toBe("Renamed");
+  });
+
+  it("renameActiveWorkspace is a no-op when submitted name equals current name", () => {
+    const ws = makeWorkspace("ws1", []);
+    ws.name = "Same";
+    const initial = makeState([ws], "ws1", [{ id: "prof-default", name: "Default" }]);
+    const h = setupHook(initial);
+    act(() => h.actions.renameActiveWorkspace());
+    act(() => h.capturedPrompt!.onSubmit("Same"));
+    // Workspace state should be the original (no rename applied).
+    expect(h.state.workspaces[0].name).toBe("Same");
   });
 
   it("deleteActiveWorkspace is a no-op when only one workspace remains", () => {

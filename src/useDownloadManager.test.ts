@@ -26,9 +26,11 @@ vi.mock("./appCore", async () => {
   const actual = await vi.importActual<typeof import("./appCore")>("./appCore");
   return {
     ...actual,
-    isTauriRuntime: () => true,
+    isTauriRuntime: () => tauriRuntimeFlag,
   };
 });
+
+let tauriRuntimeFlag = true;
 
 import { useDownloadManager } from "./hooks/useDownloadManager";
 
@@ -37,6 +39,7 @@ describe("useDownloadManager", () => {
     registered = null;
     unlistenSpy.mockClear();
     invokeSpy.mockClear();
+    tauriRuntimeFlag = true;
   });
 
   afterEach(() => {
@@ -47,6 +50,16 @@ describe("useDownloadManager", () => {
     const { result } = renderHook(() => useDownloadManager());
     expect(result.current.toasts).toEqual([]);
     expect(result.current.hasActiveDownload).toBe(false);
+  });
+
+  it("calls the unlisten cleanup on unmount (line 86)", async () => {
+    const { unmount } = renderHook(() => useDownloadManager());
+    await waitFor(() => expect(registered).not.toBeNull());
+    unmount();
+    // The cleanup awaits the unlisten promise; allow microtasks to flush.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(unlistenSpy).toHaveBeenCalled();
   });
 
   it("adds a downloading toast on 'started' event", async () => {
@@ -182,6 +195,77 @@ describe("useDownloadManager", () => {
     expect(result.current.toasts).toHaveLength(0);
   });
 
+  it("falls back to a path-only match when finished label differs from started label", async () => {
+    const { result } = renderHook(() => useDownloadManager());
+    await waitFor(() => expect(registered).not.toBeNull());
+
+    // Start with label "paneA"; finish event arrives with label "paneB" but
+    // the same path. The hook should reuse the existing downloading toast
+    // (lines 50-51 — path-only fallback finder).
+    act(() => {
+      registered!({
+        payload: {
+          kind: "started",
+          label: "paneA",
+          url: "https://x/file.zip",
+          path: "C:/dl/file.zip",
+        },
+      });
+    });
+    expect(result.current.toasts).toHaveLength(1);
+    const startedId = result.current.toasts[0].id;
+
+    act(() => {
+      registered!({
+        payload: {
+          kind: "finished",
+          label: "paneB",
+          url: "https://x/file.zip",
+          path: "C:/dl/file.zip",
+          success: true,
+        },
+      });
+    });
+    // Same toast updated to success — no new toast created.
+    expect(result.current.toasts).toHaveLength(1);
+    expect(result.current.toasts[0].id).toBe(startedId);
+    expect(result.current.toasts[0].status).toBe("success");
+  });
+
+  it("falls back to label-prefix match when finished event has no path", async () => {
+    const { result } = renderHook(() => useDownloadManager());
+    await waitFor(() => expect(registered).not.toBeNull());
+
+    // Started with a known path under label "paneX"; finished event omits path
+    // (lines 56-60 — label-prefix scan over downloading toasts).
+    act(() => {
+      registered!({
+        payload: {
+          kind: "started",
+          label: "paneX",
+          url: "https://x/missing.zip",
+          path: "C:/dl/missing.zip",
+        },
+      });
+    });
+    const startedId = result.current.toasts[0].id;
+
+    act(() => {
+      registered!({
+        payload: {
+          kind: "finished",
+          label: "paneX",
+          url: "https://x/missing.zip",
+          path: null,
+          success: false,
+        },
+      });
+    });
+    expect(result.current.toasts).toHaveLength(1);
+    expect(result.current.toasts[0].id).toBe(startedId);
+    expect(result.current.toasts[0].status).toBe("error");
+  });
+
   it("dismissToast removes a specific toast", async () => {
     const { result } = renderHook(() => useDownloadManager());
     await waitFor(() => expect(registered).not.toBeNull());
@@ -231,5 +315,204 @@ describe("useDownloadManager", () => {
       result.current.revealFolder("C:/dl/i.zip");
     });
     expect(invokeSpy).toHaveBeenCalledWith("reveal_path_in_folder", { path: "C:/dl/i.zip" });
+  });
+
+  it("revealFolder swallows invoke rejections without throwing", async () => {
+    invokeSpy.mockRejectedValue(new Error("nope"));
+    const { result } = renderHook(() => useDownloadManager());
+    await waitFor(() => expect(registered).not.toBeNull());
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    act(() => {
+      result.current.revealFolder("C:/dl/i.zip");
+    });
+    await waitFor(() => expect(errorSpy).toHaveBeenCalled());
+    errorSpy.mockRestore();
+  });
+
+  it("openFile invokes the @tauri-apps/plugin-opener openPath", async () => {
+    const opener = await import("@tauri-apps/plugin-opener");
+    const openPathSpy = opener.openPath as ReturnType<typeof vi.fn>;
+    openPathSpy.mockClear();
+    openPathSpy.mockResolvedValue(undefined);
+    const { result } = renderHook(() => useDownloadManager());
+    await waitFor(() => expect(registered).not.toBeNull());
+    await act(async () => {
+      await result.current.openFile("C:/dl/i.zip");
+    });
+    expect(openPathSpy).toHaveBeenCalledWith("C:/dl/i.zip");
+  });
+
+  it("openFile catches openPath rejection and logs error", async () => {
+    const opener = await import("@tauri-apps/plugin-opener");
+    const openPathSpy = opener.openPath as ReturnType<typeof vi.fn>;
+    openPathSpy.mockClear();
+    openPathSpy.mockRejectedValue(new Error("plugin missing"));
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { result } = renderHook(() => useDownloadManager());
+    await waitFor(() => expect(registered).not.toBeNull());
+    await act(async () => {
+      await result.current.openFile("C:/dl/i.zip");
+    });
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it("does not register a listener when not running in Tauri (line 18)", () => {
+    tauriRuntimeFlag = false;
+    registered = null;
+    renderHook(() => useDownloadManager());
+    expect(registered).toBeNull();
+  });
+
+  it("creates a new error toast when finished arrives with no matching started (lines 64-66, 72-79)", async () => {
+    const { result } = renderHook(() => useDownloadManager());
+    await waitFor(() => expect(registered).not.toBeNull());
+
+    // No prior 'started' event — finished comes alone with no path.
+    act(() => {
+      registered!({
+        payload: {
+          kind: "finished",
+          label: "ghostPane",
+          url: "https://x/orphan.zip",
+          path: null,
+          success: false,
+        },
+      });
+    });
+
+    // Should create a brand-new toast with the url-derived id, fileName fallback, and createdAt now.
+    expect(result.current.toasts).toHaveLength(1);
+    expect(result.current.toasts[0]).toMatchObject({
+      id: "ghostPane-https://x/orphan.zip",
+      status: "error",
+      fileName: "Tải xuống",
+      path: null,
+    });
+    expect(typeof result.current.toasts[0].createdAt).toBe("number");
+  });
+
+  it("ignores 'cancelled' events without modifying toast list (line 79)", async () => {
+    const { result } = renderHook(() => useDownloadManager());
+    await waitFor(() => expect(registered).not.toBeNull());
+
+    act(() => {
+      registered!({
+        payload: {
+          kind: "started",
+          label: "p1",
+          url: "https://x/c.zip",
+          path: "C:/dl/c.zip",
+        },
+      });
+    });
+    expect(result.current.toasts).toHaveLength(1);
+
+    // Send a cancelled event — handler is a no-op, list shape stays intact.
+    const before = result.current.toasts;
+    act(() => {
+      registered!({
+        payload: {
+          kind: "cancelled",
+          label: "p1",
+          url: "https://x/c.zip",
+          path: "C:/dl/c.zip",
+        },
+      });
+    });
+    expect(result.current.toasts).toBe(before);
+  });
+
+  it("fileNameFromPath returns empty string when path has no filename segment (line 26)", async () => {
+    // A path that ends with a slash forces String.match(/[^\\/]+$/) to return null,
+    // exercising the right-hand branch of `match ? match[0] : path` (line 26).
+    const { result } = renderHook(() => useDownloadManager());
+    await waitFor(() => expect(registered).not.toBeNull());
+
+    act(() => {
+      registered!({
+        payload: {
+          kind: "started",
+          label: "p1",
+          url: "https://x/",
+          path: "C:/dl/",
+        },
+      });
+    });
+
+    expect(result.current.toasts).toHaveLength(1);
+    // No segment after trailing slash → falls through to return path as-is.
+    expect(result.current.toasts[0].fileName).toBe("C:/dl/");
+  });
+
+  it("ignores unknown event kinds without modifying toast list (line 79 false branch)", async () => {
+    // Line 79 BRDA gap: payload.kind === 'cancelled' false branch (no matching kind at all).
+    const { result } = renderHook(() => useDownloadManager());
+    await waitFor(() => expect(registered).not.toBeNull());
+
+    act(() => {
+      registered!({
+        payload: {
+          kind: "unknown-future-kind",
+          label: "p1",
+          url: "https://x/u.zip",
+          path: "C:/dl/u.zip",
+        },
+      });
+    });
+    expect(result.current.toasts).toEqual([]);
+  });
+
+  it("preserves unrelated toasts when finished matches only one of many (line 76 map false branch)", async () => {
+    // Line 76 BRDA gap: inside `prev.map((t) => t.id === id ? newToast : t)`,
+    // the false branch needs at least one toast whose id !== id.
+    const { result } = renderHook(() => useDownloadManager());
+    await waitFor(() => expect(registered).not.toBeNull());
+
+    // Register two distinct downloads.
+    act(() => {
+      registered!({
+        payload: {
+          kind: "started",
+          label: "pane1",
+          url: "https://x/a.zip",
+          path: "C:/dl/a.zip",
+        },
+      });
+    });
+    act(() => {
+      registered!({
+        payload: {
+          kind: "started",
+          label: "pane2",
+          url: "https://y/b.zip",
+          path: "C:/dl/b.zip",
+        },
+      });
+    });
+    expect(result.current.toasts).toHaveLength(2);
+    const beforeOther = result.current.toasts.find((t) => t.path === "C:/dl/b.zip");
+    expect(beforeOther).toBeDefined();
+
+    // Finish only the first download — the second toast must be returned as-is by the
+    // ternary's false branch.
+    act(() => {
+      registered!({
+        payload: {
+          kind: "finished",
+          label: "pane1",
+          url: "https://x/a.zip",
+          path: "C:/dl/a.zip",
+          success: true,
+        },
+      });
+    });
+
+    expect(result.current.toasts).toHaveLength(2);
+    const afterOther = result.current.toasts.find((t) => t.path === "C:/dl/b.zip");
+    // Reference identity preserved: ternary returned the same object.
+    expect(afterOther).toBe(beforeOther);
+    const finishedToast = result.current.toasts.find((t) => t.path === "C:/dl/a.zip");
+    expect(finishedToast?.status).toBe("success");
   });
 });

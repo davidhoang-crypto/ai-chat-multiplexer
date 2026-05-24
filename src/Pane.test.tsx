@@ -127,6 +127,20 @@ describe("Pane", () => {
     expect(props.removeTab).toHaveBeenCalledWith("p1", "t2");
   });
 
+  it("calls removeTab when Enter is pressed on the tab close span", () => {
+    const { container, props } = renderHarness();
+    const closer = container.querySelector('[aria-label="Xóa Tab 2"]') as HTMLElement;
+    fireEvent.keyDown(closer, { key: "Enter" });
+    expect(props.removeTab).toHaveBeenCalledWith("p1", "t2");
+  });
+
+  it("does NOT call removeTab when a non-Enter key is pressed on the tab close span", () => {
+    const { container, props } = renderHarness();
+    const closer = container.querySelector('[aria-label="Xóa Tab 2"]') as HTMLElement;
+    fireEvent.keyDown(closer, { key: " " });
+    expect(props.removeTab).not.toHaveBeenCalled();
+  });
+
   it("calls navigateActiveWebview for back/forward/reload", () => {
     const { container, props } = renderHarness();
     fireEvent.click(container.querySelector('button[aria-label="Lùi"]')!);
@@ -162,6 +176,14 @@ describe("Pane", () => {
     const { container, props } = renderHarness();
     const input = container.querySelector<HTMLInputElement>(".url-input")!;
     fireEvent.blur(input);
+    expect(props.commitTabUrl).toHaveBeenCalledWith("p1", "t1");
+  });
+
+  it("URL input blurs (committing) when Enter key is pressed", () => {
+    const { container, props } = renderHarness();
+    const input = container.querySelector<HTMLInputElement>(".url-input")!;
+    input.focus();
+    fireEvent.keyDown(input, { key: "Enter" });
     expect(props.commitTabUrl).toHaveBeenCalledWith("p1", "t1");
   });
 
