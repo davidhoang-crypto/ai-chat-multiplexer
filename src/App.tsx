@@ -54,6 +54,7 @@ import { DownloadsPanel } from "./components/DownloadsPanel";
 import { WorkspaceSwitcher } from "./components/WorkspaceSwitcher";
 import { ConfirmDialog, TextPromptModal } from "./components/Modals";
 import { useDownloadManager } from "./hooks/useDownloadManager";
+import { useNativeWebviews } from "./hooks/useNativeWebviews";
 
 function App() {
   const [state, setState] = useState<AppState>(() => loadAppState());
@@ -91,8 +92,6 @@ function App() {
   const [dragOverPaneId, setDragOverPaneId] = useState<string | null>(null);
   const [editingUrls, setEditingUrls] = useState<Record<string, string>>({});
   const webviewShells = useRef<Record<string, HTMLDivElement | null>>({});
-  const nativeWebviews = useRef<Set<string>>(new Set());
-  const nativeWebviewUrls = useRef<Record<string, string>>({});
   const paneDrag = useRef<{ paneId: string; pointerId: number; startX: number; startY: number; active: boolean } | null>(null);
   const tabDrag = useRef<{
     paneId: string;
@@ -159,96 +158,12 @@ function App() {
     return () => window.removeEventListener("pointerdown", handlePointerDown, true);
   }, [isNewPaneMenuOpen, isWorkspaceMenuOpen, isDownloadsOpen]);
 
-  useEffect(() => {
-    if (!isTauriRuntime()) {
-      return;
-    }
-
-    let cancelled = false;
-
-    const syncNativeWebviews = () => {
-      const allLabels = new Set<string>();
-      const visibleLabels = new Set<string>();
-
-      state.workspaces.forEach((workspace) => {
-        const isActiveWorkspace = workspace.id === state.activeWorkspaceId;
-
-        workspace.panes.forEach((pane) => {
-          const shell = webviewShells.current[pane.id];
-          const profileSessionId = pane.profileId.replace(/[^a-zA-Z0-9_-]/g, "-");
-          const isPaneVisible = !focusedPaneId || focusedPaneId === pane.id;
-
-          pane.tabs.forEach((tab) => {
-            // Use the latest navigated URL when available so the webview is
-            // recreated at the right URL after app restart / HMR. Falls back to
-            // loadedUrl for fresh tabs.
-            const targetUrl = tab.currentUrl || tab.url || tab.loadedUrl;
-            const normalizedUrl = normalizeUrl(targetUrl);
-            const label = getNativeWebviewLabel(pane.id, tab);
-            allLabels.add(label);
-
-            const canBeVisible =
-              isActiveWorkspace &&
-              shell &&
-              !shouldSuspendNativeWebviews &&
-              isPaneVisible &&
-              tab.id === pane.activeTabId;
-
-            if (!canBeVisible) {
-              void invoke("native_webview_hide", { label }).catch(() => undefined);
-              return;
-            }
-
-            const bounds = shell!.getBoundingClientRect();
-            visibleLabels.add(label);
-
-            void invoke("native_webview_upsert", {
-              profileId: profileSessionId,
-              label,
-              url: normalizedUrl,
-              x: bounds.left,
-              y: bounds.top,
-              width: bounds.width,
-              height: bounds.height,
-            }).catch((error) => console.error("native_webview_upsert failed", error));
-
-            // If the webview already exists with a different desired URL,
-            // navigate it instead of recreating (preserves session/cookies).
-            const previousUrl = nativeWebviewUrls.current[label];
-            if (previousUrl !== undefined && previousUrl !== normalizedUrl) {
-              void invoke("native_webview_load_url", {
-                label,
-                url: normalizedUrl,
-              }).catch((error) => console.error("native_webview_load_url failed", error));
-            }
-            nativeWebviewUrls.current[label] = normalizedUrl;
-          });
-        });
-      });
-
-      nativeWebviews.current.forEach((label) => {
-        if (!allLabels.has(label)) {
-          void invoke("native_webview_close", { label }).catch(() => undefined);
-          delete nativeWebviewUrls.current[label];
-        } else if (!visibleLabels.has(label)) {
-          void invoke("native_webview_hide", { label }).catch(() => undefined);
-        }
-      });
-
-      if (!cancelled) {
-        nativeWebviews.current = allLabels;
-      }
-    };
-
-    const frame = window.requestAnimationFrame(syncNativeWebviews);
-    window.addEventListener("resize", syncNativeWebviews);
-
-    return () => {
-      cancelled = true;
-      window.cancelAnimationFrame(frame);
-      window.removeEventListener("resize", syncNativeWebviews);
-    };
-  }, [state, focusedPaneId, shouldSuspendNativeWebviews]);
+  useNativeWebviews({
+    state,
+    focusedPaneId,
+    suspended: shouldSuspendNativeWebviews,
+    shellsRef: webviewShells,
+  });
 
   useEffect(() => {
     if (focusedPaneId && !activePanes.some((pane) => pane.id === focusedPaneId)) {
