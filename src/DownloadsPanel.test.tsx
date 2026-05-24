@@ -50,14 +50,14 @@ describe("DownloadsPanel", () => {
     const props = defaultProps({ items: [makeItem()] });
     render(<DownloadsPanel {...props} />);
     fireEvent.click(screen.getByRole("button", { name: "Xóa hết" }));
-    expect(props.onClearAll).toHaveBeenCalled();
+    expect(props.onClearAll).toHaveBeenCalledTimes(1);
   });
 
   it("calls onClose when close icon is clicked", () => {
     const props = defaultProps();
     render(<DownloadsPanel {...props} />);
     fireEvent.click(screen.getByRole("button", { name: "Đóng" }));
-    expect(props.onClose).toHaveBeenCalled();
+    expect(props.onClose).toHaveBeenCalledTimes(1);
   });
 
   it("renders downloading status text", () => {

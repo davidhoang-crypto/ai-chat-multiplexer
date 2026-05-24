@@ -60,7 +60,7 @@ describe("TextPromptModal", () => {
       />,
     );
     fireEvent.submit(container.querySelector("form")!);
-    expect(onSubmit).toHaveBeenCalled();
+    expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 
   it("calls onClose when Hủy is clicked", () => {
@@ -75,7 +75,7 @@ describe("TextPromptModal", () => {
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "Hủy" }));
-    expect(onClose).toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("calls onClose when Escape is pressed", () => {
@@ -90,7 +90,7 @@ describe("TextPromptModal", () => {
       />,
     );
     fireEvent.keyDown(screen.getByRole("textbox"), { key: "Escape" });
-    expect(onClose).toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("calls onClose when backdrop is clicked", () => {
@@ -106,7 +106,7 @@ describe("TextPromptModal", () => {
     );
     const backdrop = container.querySelector(".modal-backdrop")!;
     fireEvent.mouseDown(backdrop, { target: backdrop, currentTarget: backdrop });
-    expect(onClose).toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("does NOT call onClose when mousedown originates inside the modal-card", () => {
@@ -203,8 +203,8 @@ describe("ConfirmDialog", () => {
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "OK" }));
-    expect(onConfirm).toHaveBeenCalled();
-    expect(onClose).toHaveBeenCalled();
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("calls onClose when Hủy is clicked without invoking onConfirm", () => {
@@ -218,7 +218,7 @@ describe("ConfirmDialog", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Hủy" }));
     expect(onConfirm).not.toHaveBeenCalled();
-    expect(onClose).toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("calls onClose when backdrop is clicked", () => {
@@ -231,7 +231,7 @@ describe("ConfirmDialog", () => {
     );
     const backdrop = container.querySelector(".modal-backdrop")!;
     fireEvent.mouseDown(backdrop, { target: backdrop, currentTarget: backdrop });
-    expect(onClose).toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("does NOT call onClose when mousedown originates inside the card", () => {

@@ -59,7 +59,7 @@ describe("useDownloadManager", () => {
     // The cleanup awaits the unlisten promise; allow microtasks to flush.
     await Promise.resolve();
     await Promise.resolve();
-    expect(unlistenSpy).toHaveBeenCalled();
+    expect(unlistenSpy).toHaveBeenCalledTimes(1);
   });
 
   it("adds a downloading toast on 'started' event", async () => {
@@ -325,7 +325,9 @@ describe("useDownloadManager", () => {
     act(() => {
       result.current.revealFolder("C:/dl/i.zip");
     });
-    await waitFor(() => expect(errorSpy).toHaveBeenCalled());
+    await waitFor(() => expect(errorSpy).toHaveBeenCalledTimes(1));
+    const errArgs = errorSpy.mock.calls[0] ?? [];
+    expect(String(errArgs[errArgs.length - 1])).toMatch(/nope/);
     errorSpy.mockRestore();
   });
 
@@ -353,7 +355,9 @@ describe("useDownloadManager", () => {
     await act(async () => {
       await result.current.openFile("C:/dl/i.zip");
     });
-    expect(errorSpy).toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const errArgs = errorSpy.mock.calls[0] ?? [];
+    expect(String(errArgs[errArgs.length - 1])).toMatch(/plugin missing/);
     errorSpy.mockRestore();
   });
 

@@ -209,7 +209,7 @@ describe("App", () => {
 
   it("forwards key state and actions to AppHeader", () => {
     render(<App />);
-    expect(appHeaderProps).toHaveBeenCalled();
+    expect(appHeaderProps).toHaveBeenCalledTimes(1);
     const props = appHeaderProps.mock.calls[0][0] as Record<string, unknown>;
     expect((props.activeWorkspace as { id: string }).id).toBe("ws-1");
     expect(props.activePaneCount).toBe(0);
@@ -223,7 +223,7 @@ describe("App", () => {
 
   it("forwards derived workspace data and refs to PaneGrid", () => {
     render(<App />);
-    expect(paneGridProps).toHaveBeenCalled();
+    expect(paneGridProps).toHaveBeenCalledTimes(1);
     const props = paneGridProps.mock.calls[0][0] as Record<string, unknown>;
     expect(props.visiblePanes).toEqual([]);
     expect(props.activePanes).toEqual([]);
@@ -236,7 +236,7 @@ describe("App", () => {
 
   it("forwards prompt, settings, and download wiring to AppOverlays", () => {
     render(<App />);
-    expect(appOverlaysProps).toHaveBeenCalled();
+    expect(appOverlaysProps).toHaveBeenCalledTimes(1);
     const props = appOverlaysProps.mock.calls[0][0] as Record<string, unknown>;
     expect(props.textPrompt).toBeNull();
     expect(props.confirmDialog).toBeNull();

@@ -52,7 +52,7 @@ describe("SettingsModal", () => {
     const props = defaultProps();
     render(<SettingsModal {...props} />);
     fireEvent.click(screen.getByRole("button", { name: "Đóng" }));
-    expect(props.onClose).toHaveBeenCalled();
+    expect(props.onClose).toHaveBeenCalledTimes(1);
   });
 
   it("calls onClose when backdrop is clicked", () => {
@@ -60,7 +60,7 @@ describe("SettingsModal", () => {
     const { container } = render(<SettingsModal {...props} />);
     const backdrop = container.querySelector(".modal-backdrop")!;
     fireEvent.mouseDown(backdrop, { target: backdrop, currentTarget: backdrop });
-    expect(props.onClose).toHaveBeenCalled();
+    expect(props.onClose).toHaveBeenCalledTimes(1);
   });
 
   it("highlights the active theme button", () => {
@@ -128,7 +128,7 @@ describe("SettingsModal", () => {
     const props = defaultProps();
     render(<SettingsModal {...props} />);
     fireEvent.click(screen.getByRole("button", { name: /Kiểm tra cập nhật/ }));
-    expect(props.onCheckForUpdates).toHaveBeenCalled();
+    expect(props.onCheckForUpdates).toHaveBeenCalledTimes(1);
   });
 
   it("shows checking text when updateStatus is checking", () => {
@@ -162,9 +162,9 @@ describe("SettingsModal", () => {
     const props = defaultProps();
     render(<SettingsModal {...props} />);
     fireEvent.click(screen.getByRole("button", { name: /Xuất cấu hình/ }));
-    expect(props.onExportConfig).toHaveBeenCalled();
+    expect(props.onExportConfig).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole("button", { name: /Nhập cấu hình/ }));
-    expect(props.onImportConfig).toHaveBeenCalled();
+    expect(props.onImportConfig).toHaveBeenCalledTimes(1);
   });
 
   it("disables backup buttons while busy", () => {
@@ -191,6 +191,9 @@ describe("SettingsModal", () => {
     const props = defaultProps();
     render(<SettingsModal {...props} />);
     fireEvent.click(screen.getByRole("link", { name: "GitHub" }));
-    expect(props.onOpenReleasePage).toHaveBeenCalled();
+    expect(props.onOpenReleasePage).toHaveBeenCalledTimes(1);
+    const arg = (props.onOpenReleasePage as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(typeof arg).toBe("string");
+    expect(arg).toMatch(/github\.com/i);
   });
 });

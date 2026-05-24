@@ -128,7 +128,7 @@ describe("AppHeader", () => {
     render(<AppHeader {...props} />);
 
     fireEvent.click(screen.getByRole("button", { name: /New profile/ }));
-    expect(props.openTextPrompt).toHaveBeenCalled();
+    expect(props.openTextPrompt).toHaveBeenCalledTimes(1);
     expect(props.setIsNewPaneMenuOpen).toHaveBeenCalledWith(false);
 
     const opts = (props.openTextPrompt as ReturnType<typeof vi.fn>).mock.calls[0][0];

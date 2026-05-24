@@ -204,7 +204,7 @@ describe("useProfileWorkspaceActions", () => {
     const h = setupHook(initial);
 
     act(() => h.actions.renameProfile("prof-x"));
-    expect(h.openTextPrompt).toHaveBeenCalled();
+    expect(h.openTextPrompt).toHaveBeenCalledTimes(1);
     act(() => h.capturedPrompt!.onSubmit("Y"));
 
     expect(h.state.profiles[0].name).toBe("Y");

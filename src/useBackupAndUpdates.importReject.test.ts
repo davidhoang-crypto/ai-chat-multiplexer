@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { act, renderHook } from "@testing-library/react";
+import { expectCallWithMessage } from "./test-utils";
 
 // Isolated test file to cover the .catch arrows on dynamic import("@tauri-apps/plugin-fs")
 // in useBackupAndUpdates.ts (anonymous_5 line 122, anonymous_7 line 164, anonymous_16 line 248).
@@ -103,7 +104,7 @@ describe("useBackupAndUpdates — dynamic plugin-fs import rejection", () => {
     });
     // The inner import().catch arrow returns { writeTextFile: null } so the hook
     // throws "không khả dụng" which is alerted.
-    expect(alertSpy).toHaveBeenCalled();
+    expectCallWithMessage(alertSpy, /không khả dụng/);
     expect(result.current.backupBusy).toBe("idle");
   });
 
@@ -116,7 +117,7 @@ describe("useBackupAndUpdates — dynamic plugin-fs import rejection", () => {
     });
     // import().catch arrow returns { readTextFile: null } so the hook throws
     // "không khả dụng" which is alerted.
-    expect(alertSpy).toHaveBeenCalled();
+    expectCallWithMessage(alertSpy, /không khả dụng/);
     expect(result.current.backupBusy).toBe("idle");
   });
 
@@ -130,7 +131,11 @@ describe("useBackupAndUpdates — dynamic plugin-fs import rejection", () => {
     });
     // import().catch arrow returns { writeTextFile: null }; the if(writeTextFile)
     // branch is skipped, then backup_sessions_zip is invoked and the success alert fires.
-    expect(alertSpy).toHaveBeenCalled();
+    expect(invokeSpy).toHaveBeenCalledWith(
+      "backup_sessions_zip",
+      expect.objectContaining({ outputPath: "C:/backup.zip" }),
+    );
+    expectCallWithMessage(alertSpy, /Backup hoàn tất/);
     expect(result.current.backupBusy).toBe("idle");
   });
 });

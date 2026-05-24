@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
+import { expectCallWithMessage, nthCallFirstArgString } from "./test-utils";
 
 const invokeSpy = vi.fn();
 const rejectingCommands = new Set<string>();
@@ -253,8 +254,9 @@ describe("useBackupAndUpdates", () => {
         await result.current.exportConfigJson();
       });
 
-      expect(createObjectURL).toHaveBeenCalled();
-      expect(clickSpy).toHaveBeenCalled();
+      expect(createObjectURL).toHaveBeenCalledTimes(1);
+      expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
+      expect(clickSpy).toHaveBeenCalledTimes(1);
       expect(revokeObjectURL).toHaveBeenCalledWith("blob:mock");
       expect(result.current.backupBusy).toBe("idle");
     });
@@ -315,7 +317,10 @@ describe("useBackupAndUpdates", () => {
       await act(async () => {
         await result.current.exportConfigJson();
       });
-      expect(alertSpy).toHaveBeenCalled();
+      expect(alertSpy).toHaveBeenCalledTimes(1);
+      const alertMsg = nthCallFirstArgString(alertSpy);
+      expect(alertMsg).toMatch(/Export lỗi/);
+      expect(alertMsg).toMatch(/disk full/);
       expect(result.current.backupBusy).toBe("idle");
     });
 
@@ -329,9 +334,7 @@ describe("useBackupAndUpdates", () => {
       await act(async () => {
         await result.current.exportConfigJson();
       });
-      expect(alertSpy).toHaveBeenCalled();
-      const alertMsg = String((alertSpy.mock.calls[0] ?? [""])[0]);
-      expect(alertMsg).toMatch(/không khả dụng/);
+      expectCallWithMessage(alertSpy, /không khả dụng/);
       expect(writeTextFileSpy).not.toHaveBeenCalled();
       expect(result.current.backupBusy).toBe("idle");
     });
@@ -400,7 +403,7 @@ describe("useBackupAndUpdates", () => {
 
       act(() => dialog.onConfirm());
 
-      expect(setStateSpy).toHaveBeenCalled();
+      expect(setStateSpy).toHaveBeenCalledTimes(1);
       const applied = setStateSpy.mock.calls[0][0] as AppState;
       expect(applied.workspaces[0].id).toBe("ws-new");
       expect(setFocusedPaneId).toHaveBeenCalledWith(null);
@@ -415,7 +418,8 @@ describe("useBackupAndUpdates", () => {
         await result.current.importConfigJson();
       });
 
-      await waitFor(() => expect(alertSpy).toHaveBeenCalled());
+      await waitFor(() => expect(alertSpy).toHaveBeenCalledTimes(1));
+      expectCallWithMessage(alertSpy, /Import lỗi/);
       expect(setConfirmDialog).not.toHaveBeenCalled();
       expect(result.current.backupBusy).toBe("idle");
     });
@@ -429,7 +433,8 @@ describe("useBackupAndUpdates", () => {
         await result.current.importConfigJson();
       });
 
-      await waitFor(() => expect(alertSpy).toHaveBeenCalled());
+      await waitFor(() => expect(alertSpy).toHaveBeenCalledTimes(1));
+      expectCallWithMessage(alertSpy, /không có workspaces|workspaces|hợp lệ|lỗi/i);
       expect(setConfirmDialog).not.toHaveBeenCalled();
     });
 
@@ -488,7 +493,13 @@ describe("useBackupAndUpdates", () => {
         await result.current.importConfigJson();
       });
       expect(readTextFileSpy).toHaveBeenCalledWith("C:/tmp/config.json");
-      expect(setConfirmDialog).toHaveBeenCalled();
+      expect(setConfirmDialog).toHaveBeenCalledTimes(1);
+      const dialogArg = setConfirmDialog.mock.calls[0][0];
+      expect(dialogArg).toEqual(
+        expect.objectContaining({
+          onConfirm: expect.any(Function),
+        }),
+      );
     });
 
     it("returns idle when user cancels the open dialog", async () => {
@@ -511,7 +522,10 @@ describe("useBackupAndUpdates", () => {
         await result.current.importConfigJson();
       });
       expect(setConfirmDialog).not.toHaveBeenCalled();
-      expect(alertSpy).toHaveBeenCalled();
+      expect(alertSpy).toHaveBeenCalledTimes(1);
+      const alertMsg = nthCallFirstArgString(alertSpy);
+      expect(alertMsg).toMatch(/Import lỗi/);
+      expect(alertMsg).toMatch(/read failed/);
       expect(result.current.backupBusy).toBe("idle");
     });
 
@@ -525,9 +539,7 @@ describe("useBackupAndUpdates", () => {
         await result.current.importConfigJson();
       });
       expect(setConfirmDialog).not.toHaveBeenCalled();
-      expect(alertSpy).toHaveBeenCalled();
-      const alertMsg = String((alertSpy.mock.calls.at(-1) ?? [""])[0]);
-      expect(alertMsg).toMatch(/không khả dụng/);
+      expectCallWithMessage(alertSpy, /không khả dụng/);
       expect(readTextFileSpy).not.toHaveBeenCalled();
       expect(result.current.backupBusy).toBe("idle");
     });
@@ -542,7 +554,7 @@ describe("useBackupAndUpdates", () => {
         await result.current.exportFullBackup();
       });
 
-      expect(alertSpy).toHaveBeenCalled();
+      expectCallWithMessage(alertSpy, /desktop|app/i);
       expect(invokeSpy).not.toHaveBeenCalled();
       expect(result.current.backupBusy).toBe("idle");
     });
@@ -555,7 +567,7 @@ describe("useBackupAndUpdates", () => {
         await result.current.restoreFullBackup();
       });
 
-      expect(alertSpy).toHaveBeenCalled();
+      expectCallWithMessage(alertSpy, /desktop|app/i);
       expect(invokeSpy).not.toHaveBeenCalled();
       expect(result.current.backupBusy).toBe("idle");
     });
@@ -594,7 +606,7 @@ describe("useBackupAndUpdates", () => {
       expect(invokeSpy).toHaveBeenCalledWith("backup_sessions_zip", {
         outputPath: "C:/tmp/backup.zip",
       });
-      expect(alertSpy).toHaveBeenCalled();
+      expectCallWithMessage(alertSpy, /Backup/i);
       expect(result.current.backupBusy).toBe("idle");
     });
 
@@ -626,7 +638,7 @@ describe("useBackupAndUpdates", () => {
       expect(invokeSpy).toHaveBeenCalledWith("backup_sessions_zip", {
         outputPath: "C:/tmp/backup.zip",
       });
-      expect(alertSpy).toHaveBeenCalled();
+      expectCallWithMessage(alertSpy, /Backup/i);
       expect(result.current.backupBusy).toBe("idle");
     });
 
@@ -648,7 +660,7 @@ describe("useBackupAndUpdates", () => {
       await act(async () => {
         await result.current.exportFullBackup();
       });
-      expect(alertSpy).toHaveBeenCalled();
+      expectCallWithMessage(alertSpy, /desktop|app/i);
       expect(invokeSpy).not.toHaveBeenCalled();
     });
   });
@@ -740,9 +752,7 @@ describe("useBackupAndUpdates", () => {
         await act(async () => {
           await result.current.exportConfigJson();
         });
-        expect(alertSpy).toHaveBeenCalled();
-        const msg = String((alertSpy.mock.calls[0] ?? [""])[0]);
-        expect(msg).toMatch(/blob denied/);
+        expectCallWithMessage(alertSpy, /blob denied/);
         expect(result.current.backupBusy).toBe("idle");
       } finally {
         (URL as unknown as { createObjectURL: typeof original }).createObjectURL = original;
@@ -853,7 +863,7 @@ describe("useBackupAndUpdates", () => {
       act(() => {
         dialogArg.onConfirm();
       });
-      expect(setStateSpy).toHaveBeenCalled();
+      expect(setStateSpy).toHaveBeenCalledTimes(1);
       const newState = setStateSpy.mock.calls[0][0];
       expect(Array.isArray(newState.profiles)).toBe(true);
       expect(newState.profiles.length).toBeGreaterThan(0);

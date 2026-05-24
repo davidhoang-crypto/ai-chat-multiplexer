@@ -84,7 +84,7 @@ describe("WorkspaceSwitcher", () => {
     const props = defaultProps();
     render(<WorkspaceSwitcher {...props} />);
     fireEvent.click(screen.getByRole("menuitem", { name: /New workspace/ }));
-    expect(props.onCreate).toHaveBeenCalled();
+    expect(props.onCreate).toHaveBeenCalledTimes(1);
     expect(props.onOpenChange).toHaveBeenCalledWith(false);
   });
 
@@ -92,14 +92,14 @@ describe("WorkspaceSwitcher", () => {
     const props = defaultProps();
     render(<WorkspaceSwitcher {...props} />);
     fireEvent.click(screen.getByRole("menuitem", { name: /Rename current/ }));
-    expect(props.onRename).toHaveBeenCalled();
+    expect(props.onRename).toHaveBeenCalledTimes(1);
   });
 
   it("calls onDelete when delete item is clicked", () => {
     const props = defaultProps();
     render(<WorkspaceSwitcher {...props} />);
     fireEvent.click(screen.getByRole("menuitem", { name: /Delete current/ }));
-    expect(props.onDelete).toHaveBeenCalled();
+    expect(props.onDelete).toHaveBeenCalledTimes(1);
   });
 
   it("disables the delete item when only one workspace exists", () => {

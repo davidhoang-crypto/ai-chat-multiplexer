@@ -478,7 +478,7 @@ describe("usePaneActions", () => {
     act(() =>
       result.current.actions.navigateActiveWebview("p1", makeTab("t1"), "back"),
     );
-    expect(back).toHaveBeenCalled();
+    expect(back).toHaveBeenCalledTimes(1);
     back.mockRestore();
   });
 
@@ -490,7 +490,7 @@ describe("usePaneActions", () => {
     act(() =>
       result.current.actions.navigateActiveWebview("p1", makeTab("t1"), "forward"),
     );
-    expect(forward).toHaveBeenCalled();
+    expect(forward).toHaveBeenCalledTimes(1);
     forward.mockRestore();
   });
 
@@ -506,7 +506,7 @@ describe("usePaneActions", () => {
       act(() =>
         result.current.actions.navigateActiveWebview("p1", makeTab("t1"), "reload"),
       );
-      expect(reloadSpy).toHaveBeenCalled();
+      expect(reloadSpy).toHaveBeenCalledTimes(1);
     } finally {
       Object.defineProperty(window, "location", {
         configurable: true,
