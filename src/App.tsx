@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef, useState } from "react";
 import "./App.css";
 import {
@@ -44,8 +43,6 @@ import {
   type AppState,
   type ChatPane,
   type ChatTab,
-  type DownloadEventPayload,
-  type DownloadToast,
   type NativeTabStatus,
   type Profile,
   type ThemeMode,
@@ -56,6 +53,7 @@ import { DownloadToastStack } from "./components/DownloadToastStack";
 import { DownloadsPanel } from "./components/DownloadsPanel";
 import { WorkspaceSwitcher } from "./components/WorkspaceSwitcher";
 import { ConfirmDialog, TextPromptModal } from "./components/Modals";
+import { useDownloadManager } from "./hooks/useDownloadManager";
 
 function App() {
   const [state, setState] = useState<AppState>(() => loadAppState());
@@ -106,7 +104,8 @@ function App() {
   } | null>(null);
   const [tabDragOver, setTabDragOver] = useState<{ paneId: string; tabId: string | null; before: boolean } | null>(null);
   const [draggingTabKey, setDraggingTabKey] = useState<string | null>(null);
-  const [downloadToasts, setDownloadToasts] = useState<DownloadToast[]>([]);
+  const downloadManager = useDownloadManager();
+  const downloadToasts = downloadManager.toasts;
   const [isDownloadsOpen, setIsDownloadsOpen] = useState(false);
 
   const activeWorkspace =
@@ -135,113 +134,6 @@ function App() {
   useEffect(() => {
     window.localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
-
-  useEffect(() => {
-    if (!isTauriRuntime()) return;
-
-    const unlistenPromise = listen<DownloadEventPayload>(
-      "native-webview-download",
-      (event) => {
-        const payload = event.payload;
-        const fileNameFromPath = (path: string) => {
-          const match = path.match(/[^\\/]+$/);
-          return match ? match[0] : path;
-        };
-
-        if (payload.kind === "started") {
-          const id = `${payload.label}-${payload.path}`;
-          setDownloadToasts((prev) => [
-            ...prev.filter((toast) => toast.id !== id),
-            {
-              id,
-              status: "downloading",
-              fileName: fileNameFromPath(payload.path),
-              path: payload.path,
-              createdAt: Date.now(),
-            },
-          ]);
-        } else if (payload.kind === "finished") {
-          setDownloadToasts((prev) => {
-            // Try exact id match first (label + path), then fall back to a
-            // path-only match (different webview started the download but the
-            // file is the same).
-            const targetPath = payload.path;
-            const exactId = targetPath ? `${payload.label}-${targetPath}` : null;
-            let target = exactId ? prev.find((toast) => toast.id === exactId) : undefined;
-            if (!target && targetPath) {
-              target = prev.find(
-                (toast) => toast.path === targetPath && toast.status === "downloading",
-              );
-            }
-            if (!target) {
-              // Last resort: most recent download still in-progress for this label.
-              target = [...prev]
-                .reverse()
-                .find(
-                  (toast) =>
-                    toast.id.startsWith(`${payload.label}-`) && toast.status === "downloading",
-                );
-            }
-
-            const id = target?.id ?? exactId ?? `${payload.label}-${payload.url}`;
-            const path = payload.path ?? target?.path ?? null;
-            const fileName = path ? fileNameFromPath(path) : target?.fileName ?? "Tải xuống";
-            const newToast: DownloadToast = {
-              id,
-              status: payload.success ? "success" : "error",
-              fileName,
-              path,
-              createdAt: target?.createdAt ?? Date.now(),
-            };
-            const existing = prev.find((toast) => toast.id === id);
-            return existing
-              ? prev.map((toast) => (toast.id === id ? newToast : toast))
-              : [...prev, newToast];
-          });
-        } else if (payload.kind === "cancelled") {
-          // Người dùng huỷ — không cần toast.
-        }
-      },
-    );
-
-    return () => {
-      void unlistenPromise.then((unlisten) => unlisten());
-    };
-  }, []);
-
-  useEffect(() => {
-    const successOrError = downloadToasts.filter(
-      (toast) => toast.status === "success" || toast.status === "error",
-    );
-    if (successOrError.length === 0) return;
-
-    const timers = successOrError.map((toast) =>
-      window.setTimeout(() => {
-        setDownloadToasts((prev) => prev.filter((item) => item.id !== toast.id));
-      }, 6000),
-    );
-
-    return () => timers.forEach((timer) => window.clearTimeout(timer));
-  }, [downloadToasts]);
-
-  const dismissDownloadToast = (id: string) => {
-    setDownloadToasts((prev) => prev.filter((toast) => toast.id !== id));
-  };
-
-  const revealDownloadFile = (path: string) => {
-    void invoke("reveal_path_in_folder", { path }).catch((error) => {
-      console.error("reveal_path_in_folder failed", error);
-    });
-  };
-
-  const openDownloadFile = async (path: string) => {
-    try {
-      const { openPath } = await import("@tauri-apps/plugin-opener");
-      await openPath(path);
-    } catch (error) {
-      console.error("openPath failed", error);
-    }
-  };
 
   // Close dropdown menus when the user clicks outside of them.
   // Settings modal is intentionally excluded — it has its own backdrop.
@@ -1314,7 +1206,7 @@ function App() {
             title="Tải xuống"
           >
             <IconDownload size={14} />
-            {downloadToasts.some((toast) => toast.status === "downloading") && (
+            {downloadManager.hasActiveDownload && (
               <span className="downloads-button-dot" aria-hidden="true" />
             )}
           </button>
@@ -1704,18 +1596,18 @@ function App() {
 
       <DownloadToastStack
         toasts={downloadToasts}
-        onDismiss={dismissDownloadToast}
-        onOpenFile={(path) => void openDownloadFile(path)}
-        onRevealFolder={revealDownloadFile}
+        onDismiss={downloadManager.dismissToast}
+        onOpenFile={(path) => void downloadManager.openFile(path)}
+        onRevealFolder={downloadManager.revealFolder}
       />
 
       <DownloadsPanel
         open={isDownloadsOpen}
         items={downloadToasts}
         onClose={() => setIsDownloadsOpen(false)}
-        onClearAll={() => setDownloadToasts([])}
-        onOpenFile={(path) => void openDownloadFile(path)}
-        onRevealFolder={revealDownloadFile}
+        onClearAll={downloadManager.clearAll}
+        onOpenFile={(path) => void downloadManager.openFile(path)}
+        onRevealFolder={downloadManager.revealFolder}
       />
     </main>
   );

@@ -137,13 +137,15 @@ export function resolveAddress(input: string): string {
   const trimmed = input.trim();
   if (!trimmed) return "about:blank";
 
-  // Already has a scheme — pass through.
-  if (/^[a-z][a-z\d+.-]*:/i.test(trimmed)) return trimmed;
-
-  // Plain "localhost", "localhost:1234" or IP-with-port → treat as URL.
+  // Plain "localhost", "localhost:1234" or 127.0.0.1[:port]/path → treat as URL.
+  // Check this BEFORE the generic scheme check below, otherwise "localhost:1420"
+  // would look like a URL whose scheme is "localhost".
   if (/^(localhost|127\.0\.0\.1)(:\d+)?(\/.*)?$/i.test(trimmed)) {
     return `http://${trimmed}`;
   }
+
+  // Already has a real scheme — pass through.
+  if (/^[a-z][a-z\d+.-]*:/i.test(trimmed)) return trimmed;
 
   // No spaces and looks like a host (has a dot, no path-only tokens).
   // Examples: "google.com", "search.brave.com/", "example.com/path?q=1".
